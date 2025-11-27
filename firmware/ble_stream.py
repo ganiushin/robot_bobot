@@ -5,9 +5,8 @@ import ujson as json
 # Constants
 FRAME_START = b'\xff\xd8'
 FRAME_END = b'\xff\xd9'
-CHUNK_SIZE = 128  # Increased from 20 for better throughput
-# Note: Client must support this MTU or handle reassembly. 
-# Standard BLE MTU is 23 (20 payload). Requesting larger MTU is client side.
+# Reduce chunk size to be safer for standard MTUs and prevent buffer overflow
+CHUNK_SIZE = 240  
 
 class BLEStream:
     def __init__(self, ble, conn_handle, tx_handle, camera_instance):
@@ -22,8 +21,8 @@ class BLEStream:
         try:
             self.ble.gatts_notify(self.conn_handle, self.tx_handle, data)
         except OSError:
-            # Buffer full or disconnected, wait a bit
-            time.sleep_ms(5)
+            # Buffer full or disconnected, wait a bit and retry
+            time.sleep_ms(10)
             try:
                 self.ble.gatts_notify(self.conn_handle, self.tx_handle, data)
             except:
@@ -47,8 +46,9 @@ class BLEStream:
             chunk = frame[offset:offset+CHUNK_SIZE]
             self.send_data(chunk)
             offset += CHUNK_SIZE
-            # Minimal delay to allow stack processing but maximize speed
-            # time.sleep_ms(1) 
+            # Vital delay to prevent packet loss/buffer overflow
+            # 5-10ms is usually required for stable ESP32 BLE streams without flow control
+            time.sleep_ms(10)
             
         return True
 
@@ -57,7 +57,7 @@ class BLEStream:
         while self.streaming:
             if not self.stream_frame():
                 time.sleep_ms(100)
-            # Yield briefly
+            # Yield briefly between frames
             time.sleep_ms(10)
 
     def stop(self):

@@ -185,7 +185,7 @@ def camera_init(config):
         # Optional quality setting
         try:
             if hasattr(cam_instance, 'set_quality'):
-                cam_instance.set_quality(85)
+                cam_instance.set_quality(80)
         except Exception:
             pass
             
