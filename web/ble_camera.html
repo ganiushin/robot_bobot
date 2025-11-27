@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLE Camera Viewer</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 800px;
+            width: 100%;
+        }
+        #video {
+            width: 100%;
+            max-width: 480px;
+            min-height: 320px;
+            background-color: #000;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-top: 10px;
+            color: #666;
+            font-family: monospace;
+        }
+        .instructions {
+            text-align: left;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BLE Camera Viewer</h1>
+        
+        <button id="connectBtn">Подключиться к ESP32-Cam</button>
+        <div id="status">Отключено</div>
+
+        <img id="video" alt="Ожидание потока..." />
+
+        <div class="instructions">
+            <h3>Инструкция:</h3>
+            <ol>
+                <li>Загрузите <code>BleCam.py</code> на ESP32 и запустите.</li>
+                <li>Нажмите кнопку "Подключиться" выше.</li>
+                <li>Выберите <strong>ESP32-Cam-BLE</strong> в списке устройств.</li>
+                <li>Браузер должен поддерживать Web Bluetooth (Chrome, Edge).</li>
+            </ol>
+            <p><em>Примечание: BLE медленнее WiFi, ожидайте низкий FPS.</em></p>
+        </div>
+    </div>
+
+    <script>
+        // Nordic UART Service UUIDs
+        const NUS_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+        const NUS_TX_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+        let device, server, service, rxChar;
+        let buffer = new Uint8Array(0);
+        
+        const connectBtn = document.getElementById('connectBtn');
+        const imgElement = document.getElementById('video');
+        const statusElement = document.getElementById('status');
+
+        connectBtn.addEventListener('click', async () => {
+            try {
+                statusElement.textContent = "Поиск устройства...";
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'ESP32-Cam-BLE' }],
+                    optionalServices: [NUS_SERVICE_UUID]
+                });
+
+                device.addEventListener('gattserverdisconnected', onDisconnected);
+
+                statusElement.textContent = "Подключение...";
+                server = await device.gatt.connect();
+                
+                statusElement.textContent = "Поиск сервиса...";
+                service = await server.getPrimaryService(NUS_SERVICE_UUID);
+                
+                statusElement.textContent = "Поиск характеристики...";
+                rxChar = await service.getCharacteristic(NUS_TX_UUID);
+                
+                await rxChar.startNotifications();
+                rxChar.addEventListener('characteristicvaluechanged', handleData);
+                
+                statusElement.textContent = "Подключено! Ожидание данных...";
+                connectBtn.disabled = true;
+                connectBtn.textContent = "Подключено";
+            } catch (error) {
+                console.error(error);
+                statusElement.textContent = "Ошибка: " + error.message;
+            }
+        });
+
+        function onDisconnected() {
+            statusElement.textContent = "Устройство отключено";
+            connectBtn.disabled = false;
+            connectBtn.textContent = "Подключиться к ESP32-Cam";
+            buffer = new Uint8Array(0);
+        }
+
+        function handleData(event) {
+            const value = new Uint8Array(event.target.value.buffer);
+            
+            // Добавляем новые данные в буфер
+            const newBuffer = new Uint8Array(buffer.length + value.length);
+            newBuffer.set(buffer);
+            newBuffer.set(value, buffer.length);
+            buffer = newBuffer;
+
+            // Ищем конец JPEG (FF D9)
+            let eoiIndex = -1;
+            // Оптимизация: искать только в конце буфера, но для простоты ищем везде
+            // (можно оптимизировать, если производительность будет низкой)
+            for (let i = 0; i < buffer.length - 1; i++) {
+                if (buffer[i] === 0xFF && buffer[i+1] === 0xD9) {
+                    eoiIndex = i + 1;
+                    break;
+                }
+            }
+
+            if (eoiIndex !== -1) {
+                // Нашли полный кадр
+                const jpegData = buffer.slice(0, eoiIndex + 1);
+                
+                // Проверка начала JPEG (FF D8)
+                if (jpegData[0] === 0xFF && jpegData[1] === 0xD8) {
+                    const blob = new Blob([jpegData], { type: 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+                    
+                    // Освобождаем предыдущий URL
+                    if (imgElement.src && imgElement.src.startsWith('blob:')) {
+                        URL.revokeObjectURL(imgElement.src);
+                    }
+                    
+                    imgElement.src = url;
+                    statusElement.textContent = `Кадр получен: ${jpegData.length} байт`;
+                } else {
+                    console.warn("Найден конец кадра, но нет начала (FF D8). Сброс.");
+                }
+                
+                // Убираем обработанный кадр из буфера
+                buffer = buffer.slice(eoiIndex + 1);
+            }
+            
+            // Защита от переполнения памяти (если потеряли FF D9)
+            if (buffer.length > 200000) { // 200KB
+                console.warn("Буфер переполнен, сброс");
+                buffer = new Uint8Array(0);
+            }
+        }
+    </script>
+</body>
+</html>
+

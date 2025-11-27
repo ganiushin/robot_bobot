@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ESP32 Camera Preview</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 16px; color: #222; }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    #status { font-size: 13px; color: #666; }
+    #preview { width: 100%; max-width: 640px; max-height: 480px; background:#000; object-fit: contain; border:1px solid #ccc; border-radius:4px; }
+    #log { white-space: pre-wrap; background:#f9fafb; padding:8px; border:1px solid #eee; border-radius:4px; height: 160px; overflow:auto; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h3>ESP32 Camera Preview</h3>
+  <div class="row">
+    <button id="btnConnect">Подключиться</button>
+    <label for="framesize">Разрешение:</label>
+    <select id="framesize">
+      <option value="QQVGA">QQVGA (160x120)</option>
+      <option value="QVGA" selected>QVGA (320x240)</option>
+      <option value="VGA">VGA (640x480)</option>
+      <option value="SVGA">SVGA (800x600)</option>
+      <option value="XGA">XGA (1024x768)</option>
+      <option value="SXGA">SXGA (1280x1024)</option>
+      <option value="UXGA">UXGA (1600x1200)</option>
+    </select>
+    <button id="btnInit">Инициализировать</button>
+    <button id="btnStart">Старт</button>
+    <button id="btnStop">Стоп</button>
+    <span id="status">Отключено</span>
+  </div>
+  <img id="preview" alt="" />
+  <h4>Лог</h4>
+  <div id="log"></div>
+
+<script>
+const NUS_SERVICE  = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX_CHAR  = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX_CHAR  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+let device, server, service, rxChar, txChar;
+let encoder = new TextEncoder();
+let decoder = new TextDecoder();
+let streaming = false;
+let chunkStore = {};
+let captureActive = false;
+
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('log');
+const imgEl = document.getElementById('preview');
+const framesizeEl = document.getElementById('framesize');
+
+function setStatus(s){ statusEl.textContent = s; }
+function log(s){ logEl.textContent += s + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+
+async function connect(){
+  setStatus('Запрос устройства...');
+  device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [NUS_SERVICE] });
+  device.addEventListener('gattserverdisconnected', () => setStatus('Отключено'));
+  setStatus('Подключение...');
+  server = await device.gatt.connect();
+  service = await server.getPrimaryService(NUS_SERVICE);
+  rxChar = await service.getCharacteristic(NUS_RX_CHAR);
+  txChar = await service.getCharacteristic(NUS_TX_CHAR);
+  await txChar.startNotifications();
+  txChar.addEventListener('characteristicvaluechanged', onNotify);
+  setStatus('Подключено: ' + (device.name || 'ESP32'));
+  log('Подключено');
+}
+
+async function writeLine(obj){
+  const s = JSON.stringify(obj) + '\n';
+  const data = encoder.encode(s);
+  const CHUNK = 180;
+  for (let i=0;i<data.length;i+=CHUNK){
+    const slice = data.slice(i, i+CHUNK);
+    if (rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(slice);
+    else await rxChar.writeValue(slice);
+    await new Promise(r=>setTimeout(r,5));
+  }
+}
+
+function onNotify(ev){
+  const s = decoder.decode(ev.target.value);
+  s.split('\n').filter(Boolean).forEach(line => {
+    try{
+      const msg = JSON.parse(line);
+      if (msg.op === 'camera_chunk') handleChunk(msg);
+      else if (msg.op === 'ack') handleAck(msg);
+      else { log('[MSG] '+line); }
+    }catch{ /* ignore non-json */ }
+  });
+}
+
+function handleChunk(msg){
+  if (!captureActive && !streaming) return;
+  if (typeof msg.index !== 'number') return;
+  if (msg.final === false) {
+    if (msg.index === 0) log('Получен первый chunk');
+  }
+  if (!msg.final){ chunkStore[msg.index] = msg.data || ''; return; }
+  let combined = '';
+  for (let i=0;i<msg.index;i++) combined += chunkStore[i] || '';
+  chunkStore = {};
+  captureActive = false;
+  if (combined){ imgEl.src = `data:image/jpeg;base64,${combined}`; }
+  else { log('Пустое изображение'); }
+  if (streaming) requestNextCapture();
+}
+
+function handleAck(msg){
+  if (msg.phase === 'camera_init'){
+    if (msg.ok) { setStatus('Камера инициализирована'); log('camera_init ok'); }
+    else { setStatus('Ошибка инициализации: ' + (msg.err||'')); log('camera_init err: '+(msg.err||'')); }
+    // После успешной инициализации сделаем один снимок автоматически
+    if (msg.ok) {
+      requestNextCapture();
+    }
+  } else if (msg.phase === 'camera_capture'){
+    if (!msg.ok){ setStatus('Ошибка съемки: ' + (msg.err||'')); log('capture err: '+(msg.err||'')); captureActive=false; streaming=false; }
+    else { log('ACK capture ok, size='+ (msg.size||'') + ', chunks='+(msg.chunks||'')); }
+  }
+}
+
+async function initCamera(){
+  const framesize = framesizeEl.value || 'QVGA';
+  await writeLine({op:'camera_init', config:{framesize}});
+}
+
+async function requestNextCapture(){
+  if (captureActive) return;
+  captureActive = true;
+  const framesize = framesizeEl.value || 'QVGA';
+  await writeLine({op:'camera_capture', config:{framesize}});
+}
+
+document.getElementById('btnConnect').onclick = async () => {
+  if (!('bluetooth' in navigator)) { alert('Web Bluetooth не поддерживается'); return; }
+  try{ await connect(); }catch(e){ alert('Ошибка подключения: '+e); }
+};
+document.getElementById('btnInit').onclick = async () => { try{ await initCamera(); }catch(e){ log('init err: '+e); } };
+document.getElementById('btnStart').onclick = async () => { if (!server) { alert('Нет подключения'); return; } streaming = true; requestNextCapture(); };
+document.getElementById('btnStop').onclick = () => { streaming = false; };
+</script>
+</body>
+</html>

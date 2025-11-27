@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>ESP32 Blockly Visual Editor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://unpkg.com/blockly@10.0.0/blockly.min.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/blocks_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/python_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/msg/ru.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+  
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+      margin: 0; 
+      padding: 0;
+      color: #111; 
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .header {
+      background: #4a90e2;
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .header h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .header button {
+      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .header button:hover {
+      background: rgba(255,255,255,0.3);
+    }
+    .header button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .header #status {
+      margin-left: auto;
+      padding: 6px 12px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .main-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    #blocklyDiv {
+      flex: 1;
+      height: 100%;
+    }
+    .sidebar {
+      width: 350px;
+      background: #f5f5f5;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-tabs {
+      display: flex;
+      border-bottom: 1px solid #ddd;
+    }
+    .sidebar-tab {
+      flex: 1;
+      padding: 10px;
+      background: #e0e0e0;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .sidebar-tab.active {
+      background: #f5f5f5;
+      border-bottom: 2px solid #4a90e2;
+    }
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+    .sidebar-content.hidden {
+      display: none;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 8px;
+      resize: vertical;
+    }
+    pre {
+      background: #111;
+      color: #0f0;
+      padding: 10px;
+      height: 200px;
+      overflow: auto;
+      border-radius: 4px;
+      font-size: 12px;
+      margin: 0;
+    }
+    .row {
+      margin: 10px 0;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    input[type="text"] {
+      min-width: 200px;
+      padding: 6px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    button {
+      cursor: pointer;
+      padding: 6px 12px;
+      border: 1px solid #ddd;
+      background: white;
+      border-radius: 4px;
+    }
+    button:hover {
+      background: #f0f0f0;
+    }
+    select {
+      padding: 6px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      background: white;
+    }
+    .row.column {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    #cameraPreview {
+      width: 100%;
+      max-height: 240px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #000;
+      object-fit: contain;
+    }
+    .status-text {
+      font-size: 12px;
+      color: #555;
+      margin: 6px 0;
+    }
+    .tm-results {
+      list-style: none;
+      padding: 0;
+      margin: 8px 0 0 0;
+      font-size: 13px;
+    }
+    .tm-results li {
+      margin: 4px 0;
+    }
+    .dataset-section {
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid #ddd;
+    }
+    .class-input-group {
+      display: flex;
+      gap: 8px;
+      margin: 8px 0;
+      align-items: center;
+    }
+    .class-input-group input {
+      flex: 1;
+      min-width: 0;
+    }
+    .dataset-stats {
+      font-size: 12px;
+      color: #666;
+      margin: 8px 0;
+    }
+    .training-progress {
+      margin: 10px 0;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: #e0e0e0;
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 5px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #4a90e2;
+      transition: width 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 12px;
+    }
+    .stream-toggle {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>ESP32 Blockly Visual Editor</h2>
+    <button id="btnConnect">Подключиться</button>
+    <button id="btnSaveProject">Сохранить проект</button>
+    <button id="btnLoadProject">Открыть проект</button>
+    <button id="btnGenerateCode">Генерировать код</button>
+    <button id="btnRun">Запустить</button>
+    <button id="btnUpload">Загрузить на ESP32</button>
+    <span id="status">Отключено</span>
+    <input type="file" id="projectInput" style="display:none" accept=".json" />
+  </div>
+
+  <div class="main-container">
+    <div id="blocklyDiv"></div>
+    <div class="sidebar">
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-tab="code">Код</button>
+        <button class="sidebar-tab" data-tab="console">Консоль</button>
+        <button class="sidebar-tab" data-tab="files">Файлы</button>
+        <button class="sidebar-tab" data-tab="camera">Камера/AI</button>
+      </div>
+      <div class="sidebar-content" id="codeTab">
+        <h3>Сгенерированный Python код:</h3>
+        <textarea id="code" readonly></textarea>
+        <div class="row">
+          <button id="btnCopyCode">Копировать код</button>
+        </div>
+      </div>
+      <div class="sidebar-content hidden" id="consoleTab">
+        <h3>Консоль:</h3>
+        <pre id="log"></pre>
+      </div>
+      <div class="sidebar-content hidden" id="filesTab">
+        <h3>Управление файлами:</h3>
+        <div class="row">
+          <input id="putPath" type="text" placeholder="/program.py" value="/program.py" />
+        </div>
+        <div class="row">
+          <input id="fileInput" type="file" />
+        </div>
+        <div class="row">
+          <input id="lsPath" type="text" placeholder="/" />
+          <button id="btnLs">Список</button>
+        </div>
+        <div class="row">
+          <input id="rmPath" type="text" placeholder="/old.py" />
+          <button id="btnRm">Удалить</button>
+        </div>
+      </div>
+      <div class="sidebar-content hidden" id="cameraTab">
+        <h3>Камера OV2640</h3>
+        <div class="row">
+          <label for="cameraFramesize">Разрешение:</label>
+          <select id="cameraFramesize">
+            <option value="QQVGA" selected>QQVGA (160x120)</option>
+            <option value="QVGA">QVGA (320x240)</option>
+            <option value="HQVGA">HQVGA (240x176)</option>
+            <option value="VGA">VGA (640x480)</option>
+          </select>
+        </div>
+        <div class="row">
+            <button id="btnStreamToggle">Старт видеопотока</button>
+        </div>
+        <div class="row">
+          <button id="btnCameraInit">Инициализировать</button>
+          <button id="btnCameraDeinit">Выключить</button>
+          <button id="btnCameraCapture">Сделать снимок</button>
+        </div>
+        <img id="cameraPreview" alt="Последний снимок с камеры" crossorigin="anonymous" />
+        <div class="status-text" id="cameraInfo"></div>
+        <div class="dataset-section">
+          <h3>Сбор данных и обучение</h3>
+          <div class="row column">
+            <input id="classNameInput" type="text" placeholder="Название класса (например: Кот, Собака)" />
+            <div class="class-input-group">
+              <button id="btnAddSample">Добавить снимок в класс</button>
+              <button id="btnClearClass">Очистить класс</button>
+            </div>
+          </div>
+          <div class="dataset-stats" id="datasetStats">Классов: 0, Всего снимков: 0</div>
+          <div class="row">
+            <button id="btnTrainModel">Обучить модель</button>
+            <button id="btnClassify">Классифицировать снимок</button>
+          </div>
+          <ul class="tm-results" id="results"></ul>
+          <div class="training-progress hidden" id="trainingProgress">
+            <div class="status-text">Обучение...</div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progressFill" style="width: 0%">0%</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// BLE connection
+const NUS_SERVICE  = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_RX_CHAR  = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_TX_CHAR  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const NUS_STREAM_CHAR = '6e400004-b5a3-f393-e0a9-e50e24dcca9e';
+
+let device, server, service, rxChar, txChar, streamChar;
+let encoder = new TextEncoder();
+let decoder = new TextDecoder();
+let workspace;
+let cameraChunkStore = {};
+let cameraCaptureResolve = null;
+let cameraCaptureReject = null;
+let cameraCaptureActive = false;
+let cameraImageBase64 = null;
+let dataset = {}; // Not used with KNN
+let trainedModel = null;
+let streamActive = false;
+let streamBuffer = new Uint8Array(0);
+let classifier = null;
+let mobilenetModel = null;
+
+const cameraInfoEl = document.getElementById('cameraInfo');
+const cameraPreviewEl = document.getElementById('cameraPreview');
+const resultsEl = document.getElementById('results');
+const cameraFramesizeEl = document.getElementById('cameraFramesize');
+const btnStreamToggle = document.getElementById('btnStreamToggle');
+
+// UI helpers
+const logEl = document.getElementById('log');
+function log(s){ logEl.textContent += s + '\n'; logEl.scrollTop = logEl.scrollHeight; }
+function setStatus(s){ document.getElementById('status').textContent = s; }
+
+function updateCameraStatus(text){
+  if (cameraInfoEl) cameraInfoEl.textContent = text || '';
+}
+
+// Backward compatibility: route TM status calls to camera status
+function updateTMStatus(text){
+  updateCameraStatus(text);
+}
+
+function renderResults(preds){
+  if (!resultsEl) return;
+  resultsEl.innerHTML = '';
+  preds.slice().sort((a,b)=>b.prob-a.prob).forEach(p=>{
+    const li = document.createElement('li');
+    li.textContent = `${p.label}: ${(p.prob*100).toFixed(2)}%`;
+    resultsEl.appendChild(li);
+  });
+}
+
+function resetCameraCaptureState(){
+  cameraChunkStore = {};
+  cameraCaptureResolve = null;
+  cameraCaptureReject = null;
+  cameraCaptureActive = false;
+}
+
+function updateCameraPreview(base64){
+  if (!cameraPreviewEl) return;
+  cameraPreviewEl.src = base64 ? `data:image/jpeg;base64,${base64}` : '';
+}
+
+function formatBytes(bytes){
+  if (!bytes || bytes <= 0) return '0 Б';
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} МБ`;
+}
+
+function finishCameraCaptureSuccess(data){
+  const resolveFn = cameraCaptureResolve;
+  resetCameraCaptureState();
+  if (typeof resolveFn === 'function') {
+    resolveFn(data);
+  }
+}
+
+function finishCameraCaptureError(err){
+  const rejectFn = cameraCaptureReject;
+  resetCameraCaptureState();
+  if (typeof rejectFn === 'function') {
+    rejectFn(err);
+  }
+}
+
+function ensureImageLoaded(img){
+  if (!img) {
+    return Promise.resolve();
+  }
+  if (img.complete && img.naturalWidth > 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const onLoad = () => {
+      img.removeEventListener('load', onLoad);
+      img.removeEventListener('error', onError);
+      resolve();
+    };
+    const onError = (err) => {
+      img.removeEventListener('load', onLoad);
+      img.removeEventListener('error', onError);
+      reject(err || new Error('Ошибка загрузки изображения'));
+    };
+    img.addEventListener('load', onLoad, { once: true });
+    img.addEventListener('error', onError, { once: true });
+  });
+}
+
+// Tab switching
+document.querySelectorAll('.sidebar-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    const tabName = tab.dataset.tab;
+    document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.sidebar-content').forEach(c => c.classList.add('hidden'));
+    tab.classList.add('active');
+    document.getElementById(tabName + 'Tab').classList.remove('hidden');
+  });
+});
+
+// Initialize Blockly
+function initBlockly() {
+  workspace = Blockly.inject('blocklyDiv', {
+    toolbox: {
+      "kind": "categoryToolbox",
+      "contents": [
+        {
+          "kind": "category",
+          "name": "Основные",
+          "colour": "%{BKY_LOOPS_HUE}",
+          "contents": [
+            {"kind": "block", "type": "controls_if"},
+            {"kind": "block", "type": "controls_repeat_ext"},
+            {"kind": "block", "type": "controls_whileUntil"},
+            {"kind": "block", "type": "controls_for"},
+            {"kind": "block", "type": "controls_flow_statements"},
+            {"kind": "block", "type": "logic_compare"},
+            {"kind": "block", "type": "logic_operation"},
+            {"kind": "block", "type": "logic_boolean"},
+            {"kind": "block", "type": "math_number"},
+            {"kind": "block", "type": "text"},
+            {"kind": "block", "type": "variables_get"},
+            {"kind": "block", "type": "variables_set"},
+          ]
+        },
+        {
+          "kind": "category",
+          "name": "Камера/AI",
+          "colour": "230",
+          "contents": [
+            {"kind": "block", "type": "camera_init"},
+            {"kind": "block", "type": "camera_start_stream"},
+            {"kind": "block", "type": "camera_stop_stream"},
+            {"kind": "block", "type": "ai_get_class"},
+            {"kind": "block", "type": "camera_capture_to_file"},
+          ]
+        },
+        {
+          "kind": "category",
+          "name": "Инфракрасный датчик",
+          "colour": "#5C81A6",
+          "contents": [
+            {"kind": "block", "type": "ir_sensor_init"},
+            {"kind": "block", "type": "ir_sensor_read"},
+          ]
+        },
+        {
+          "kind": "category",
+          "name": "Датчик LIS2MDL",
+          "colour": "#5CA65C",
+          "contents": [
+            {"kind": "block", "type": "lis2mdl_init"},
+            {"kind": "block", "type": "lis2mdl_read_magnetic"},
+          ]
+        },
+        {
+          "kind": "category",
+          "name": "DC Моторы",
+          "colour": "#A65C81",
+          "contents": [
+            {"kind": "block", "type": "motor_init"},
+            {"kind": "block", "type": "motor_set_speed"},
+            {"kind": "block", "type": "motor_stop"},
+          ]
+        },
+        {
+          "kind": "category",
+          "name": "Время",
+          "colour": "#5C5CA6",
+          "contents": [
+            {"kind": "block", "type": "time_sleep"},
+          ]
+        }
+      ]
+    },
+    grid: {
+      spacing: 20,
+      length: 3,
+      colour: '#ccc',
+      snap: true
+    },
+    zoom: {
+      controls: true,
+      wheel: true,
+      startScale: 1.0,
+      maxScale: 3,
+      minScale: 0.3,
+      scaleSpeed: 1.2
+    },
+    trashcan: true
+  });
+
+  // Register custom blocks
+  registerCustomBlocks();
+  
+  // Generate code on workspace change
+  workspace.addChangeListener(() => {
+    generateCode();
+  });
+  
+  generateCode();
+}
+
+// Custom blocks definitions
+function registerCustomBlocks() {
+  // IR Sensor blocks
+  Blockly.Blocks['ir_sensor_init'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Инициализировать ИК датчик")
+          .appendField("на пине")
+          .appendField(new Blockly.FieldNumber(32, 0, 40), "PIN");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(133);
+      this.setTooltip("Инициализирует инфракрасный датчик на указанном пине");
+    }
+  };
+
+  Blockly.Blocks['ir_sensor_read'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Прочитать ИК датчик");
+      this.setOutput(true, "Number");
+      this.setColour(133);
+      this.setTooltip("Возвращает значение инфракрасного датчика (0 или 1)");
+    }
+  };
+
+  // LIS2MDL blocks
+  Blockly.Blocks['lis2mdl_init'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Инициализировать LIS2MDL");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(120);
+      this.setTooltip("Инициализирует датчик магнитного поля LIS2MDL по I2C");
+    }
+  };
+
+  Blockly.Blocks['lis2mdl_read_magnetic'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Прочитать магнитное поле LIS2MDL")
+          .appendField("ось")
+          .appendField(new Blockly.FieldDropdown([["X", "x"], ["Y", "y"], ["Z", "z"]]), "AXIS");
+      this.setOutput(true, "Number");
+      this.setColour(120);
+      this.setTooltip("Возвращает значение магнитного поля по выбранной оси");
+    }
+  };
+
+  // Motor blocks
+  Blockly.Blocks['motor_init'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Инициализировать мотор")
+          .appendField(new Blockly.FieldDropdown([["Мотор 1", "1"], ["Мотор 2", "2"]]), "MOTOR");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(160);
+      this.setTooltip("Инициализирует выбранный DC мотор");
+    }
+  };
+
+  Blockly.Blocks['motor_set_speed'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Установить скорость мотора")
+          .appendField(new Blockly.FieldDropdown([["Мотор 1", "1"], ["Мотор 2", "2"]]), "MOTOR");
+      this.appendValueInput("SPEED")
+          .setCheck("Number")
+          .appendField("скорость (-100 до 100)");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(160);
+      this.setTooltip("Устанавливает скорость мотора от -100 (назад) до 100 (вперед)");
+    }
+  };
+
+  Blockly.Blocks['motor_stop'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Остановить мотор")
+          .appendField(new Blockly.FieldDropdown([["Мотор 1", "1"], ["Мотор 2", "2"], ["Оба мотора", "all"]]), "MOTOR");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(160);
+      this.setTooltip("Останавливает выбранный мотор");
+    }
+  };
+
+  // Camera blocks
+  const cameraFramesizes = [
+    ["QQVGA (160x120)", "QQVGA"],
+    ["QVGA (320x240)", "QVGA"],
+    ["HQVGA (240x176)", "HQVGA"],
+    ["VGA (640x480)", "VGA"],
+  ];
+
+  Blockly.Blocks['camera_init'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Инициализировать камеру")
+          .appendField("разрешение")
+          .appendField(new Blockly.FieldDropdown(cameraFramesizes), "FRAMESIZE");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(30);
+      this.setTooltip("Инициализирует камеру OV2640 с указанным разрешением");
+    }
+  };
+
+  Blockly.Blocks['camera_deinit'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Выключить камеру");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(30);
+      this.setTooltip("Останавливает и освобождает камеру");
+    }
+  };
+  
+  Blockly.Blocks['camera_start_stream'] = {
+      init: function() {
+          this.appendDummyInput().appendField("Запустить видеопоток");
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+          this.setColour(30);
+          this.setTooltip("Запускает потоковую передачу видео по BLE");
+      }
+  };
+  
+  Blockly.Blocks['camera_stop_stream'] = {
+      init: function() {
+          this.appendDummyInput().appendField("Остановить видеопоток");
+          this.setPreviousStatement(true, null);
+          this.setNextStatement(true, null);
+          this.setColour(30);
+          this.setTooltip("Останавливает видеопоток");
+      }
+  };
+  
+  Blockly.Blocks['ai_get_class'] = {
+      init: function() {
+          this.appendDummyInput().appendField("AI: Получить класс (ждать)");
+          this.setOutput(true, "String");
+          this.setColour(230);
+          this.setTooltip("Ждет классификации текущего кадра в браузере и возвращает имя класса");
+      }
+  };
+
+  Blockly.Blocks['camera_capture_to_file'] = {
+    init: function() {
+      this.appendValueInput("PATH")
+          .appendField("Сохранить снимок в файл");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(30);
+      this.setTooltip("Делает снимок и сохраняет его в заданный файл");
+    }
+  };
+
+  Blockly.Blocks['camera_capture_base64'] = {
+    init: function() {
+      this.appendDummyInput()
+          .appendField("Получить снимок камеры (base64)");
+      this.setOutput(true, "String");
+      this.setColour(30);
+      this.setTooltip("Возвращает изображение камеры, закодированное в base64");
+    }
+  };
+
+  // Time block
+  Blockly.Blocks['time_sleep'] = {
+    init: function() {
+      this.appendValueInput("DURATION")
+          .setCheck("Number")
+          .appendField("Ждать");
+      this.appendDummyInput()
+          .appendField(new Blockly.FieldDropdown([["секунд", "s"], ["миллисекунд", "ms"]]), "UNIT");
+      this.setPreviousStatement(true, null);
+      this.setNextStatement(true, null);
+      this.setColour(230);
+      this.setTooltip("Ожидает указанное время");
+    }
+  };
+}
+
+// Track imports to avoid duplicates
+let imports = new Set();
+
+// Custom Python generator
+Blockly.Python['ir_sensor_init'] = function(block) {
+  const pin = block.getFieldValue('PIN');
+  imports.add('from machine import Pin');
+  return `ir_pin = Pin(${pin}, Pin.IN)\n`;
+};
+
+Blockly.Python['ir_sensor_read'] = function(block) {
+  return ['ir_pin.value()', Blockly.Python.ORDER_ATOMIC];
+};
+
+Blockly.Python['lis2mdl_init'] = function(block) {
+  imports.add('from machine import I2C, Pin');
+  imports.add('from lis2mdl import LIS2MDL');
+  return `i2c = I2C(0, scl=Pin(22), sda=Pin(21))\nlis2mdl = LIS2MDL(i2c)\n`;
+};
+
+Blockly.Python['lis2mdl_read_magnetic'] = function(block) {
+  const axis = block.getFieldValue('AXIS');
+  return [`lis2mdl.magnetic[${axis === 'x' ? 0 : axis === 'y' ? 1 : 2}]`, Blockly.Python.ORDER_ATOMIC];
+};
+
+Blockly.Python['motor_init'] = function(block) {
+  const motor = block.getFieldValue('MOTOR');
+  imports.add('from machine import Pin, PWM');
+  if (motor === '1') {
+    return `motor1_in1 = PWM(Pin(12), freq=1000)\nmotor1_in2 = PWM(Pin(13), freq=1000)\n`;
+  } else {
+    return `motor2_in1 = PWM(Pin(14), freq=1000)\nmotor2_in2 = PWM(Pin(15), freq=1000)\n`;
+  }
+};
+
+Blockly.Python['motor_set_speed'] = function(block) {
+  const motor = block.getFieldValue('MOTOR');
+  const speed = Blockly.Python.valueToCode(block, 'SPEED', Blockly.Python.ORDER_ATOMIC) || '0';
+  let code = '';
+  if (motor === '1') {
+    code = `speed_val = max(-100, min(100, int(${speed})))\n`;
+    code += `if speed_val > 0:\n`;
+    code += `    motor1_in1.duty(int(speed_val * 10.23))\n`;
+    code += `    motor1_in2.duty(0)\n`;
+    code += `elif speed_val < 0:\n`;
+    code += `    motor1_in1.duty(0)\n`;
+    code += `    motor1_in2.duty(int(-speed_val * 10.23))\n`;
+    code += `else:\n`;
+    code += `    motor1_in1.duty(0)\n`;
+    code += `    motor1_in2.duty(0)\n`;
+  } else {
+    code = `speed_val = max(-100, min(100, int(${speed})))\n`;
+    code += `if speed_val > 0:\n`;
+    code += `    motor2_in1.duty(int(speed_val * 10.23))\n`;
+    code += `    motor2_in2.duty(0)\n`;
+    code += `elif speed_val < 0:\n`;
+    code += `    motor2_in1.duty(0)\n`;
+    code += `    motor2_in2.duty(int(-speed_val * 10.23))\n`;
+    code += `else:\n`;
+    code += `    motor2_in1.duty(0)\n`;
+    code += `    motor2_in2.duty(0)\n`;
+  }
+  return code;
+};
+
+Blockly.Python['motor_stop'] = function(block) {
+  const motor = block.getFieldValue('MOTOR');
+  if (motor === '1') {
+    return `motor1_in1.duty(0)\nmotor1_in2.duty(0)\n`;
+  } else if (motor === '2') {
+    return `motor2_in1.duty(0)\nmotor2_in2.duty(0)\n`;
+  } else {
+    return `motor1_in1.duty(0)\nmotor1_in2.duty(0)\nmotor2_in1.duty(0)\nmotor2_in2.duty(0)\n`;
+  }
+};
+
+Blockly.Python['camera_init'] = function(block) {
+  const framesize = block.getFieldValue('FRAMESIZE') || 'QQVGA';
+  imports.add('from bobot import camera_init');
+  return `camera_init({'framesize': '${framesize}'})\n`;
+};
+
+Blockly.Python['camera_deinit'] = function(block) {
+  imports.add('from bobot import camera_deinit');
+  return 'camera_deinit()\n';
+};
+
+Blockly.Python['camera_start_stream'] = function(block) {
+    imports.add('from bobot import handle_json');
+    return "handle_json({'op': 'stream_start'})\n";
+};
+
+Blockly.Python['camera_stop_stream'] = function(block) {
+    imports.add('from bobot import handle_json');
+    return "handle_json({'op': 'stream_stop'})\n";
+};
+
+Blockly.Python['ai_get_class'] = function(block) {
+    imports.add('from bobot import wait_for_ai');
+    return ['wait_for_ai()', Blockly.Python.ORDER_FUNCTION_CALL];
+};
+
+
+Blockly.Python['camera_capture_to_file'] = function(block) {
+  const path = Blockly.Python.valueToCode(block, 'PATH', Blockly.Python.ORDER_NONE) || "'/capture.jpg'";
+  imports.add('import camera');
+  let code = 'img = camera.capture()\n';
+  code += `f = open(${path}, "wb")\n`;
+  code += 'f.write(img)\n';
+  code += 'f.close()\n';
+  return code;
+};
+
+Blockly.Python['camera_capture_base64'] = function(block) {
+  imports.add('import camera');
+  imports.add('import ubinascii');
+  const code = "ubinascii.b2a_base64(camera.capture()).decode('utf-8').strip()";
+  return [code, Blockly.Python.ORDER_FUNCTION_CALL];
+};
+
+Blockly.Python['time_sleep'] = function(block) {
+  const duration = Blockly.Python.valueToCode(block, 'DURATION', Blockly.Python.ORDER_ATOMIC) || '0';
+  const unit = block.getFieldValue('UNIT');
+  imports.add('import time');
+  if (unit === 's') {
+    return `time.sleep(${duration})\n`;
+  } else {
+    return `time.sleep_ms(int(${duration}))\n`;
+  }
+};
+
+// Override workspaceToCode to add imports and ensure proper structure
+const originalWorkspaceToCode = Blockly.Python.workspaceToCode;
+Blockly.Python.workspaceToCode = function(workspace) {
+  imports.clear();
+  const code = originalWorkspaceToCode.call(this, workspace);
+  
+  // Deduplicate imports
+  const importsArray = Array.from(imports);
+  const uniqueImports = [];
+  const seen = new Set();
+  
+  for (const imp of importsArray) {
+    if (!seen.has(imp)) {
+      seen.add(imp);
+      uniqueImports.push(imp);
+    }
+  }
+  
+  // Combine imports and code
+  if (uniqueImports.length > 0) {
+    return uniqueImports.join('\n') + '\n\n' + code;
+  }
+  return code;
+};
+
+// Generate Python code from blocks
+function generateCode() {
+  if (!workspace) return;
+  try {
+    const code = Blockly.Python.workspaceToCode(workspace);
+    // Clean up code - remove empty lines at start and ensure proper structure
+    const cleanedCode = code.split('\n').filter(line => line.trim() || line === '').join('\n');
+    document.getElementById('code').value = cleanedCode;
+  } catch (e) {
+    console.error('Error generating code:', e);
+    document.getElementById('code').value = '# Error generating code: ' + e.message;
+  }
+}
+
+// Copy code to clipboard
+document.getElementById('btnCopyCode').onclick = () => {
+  const code = document.getElementById('code').value;
+  navigator.clipboard.writeText(code).then(() => {
+    log('Код скопирован в буфер обмена');
+  });
+};
+
+// Generate code button
+document.getElementById('btnGenerateCode').onclick = () => {
+  generateCode();
+  log('Код сгенерирован');
+};
+
+// BLE connection
+async function connect() {
+  setStatus('Поиск устройств...');
+  try {
+    // Request device
+    device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [NUS_SERVICE]
+    });
+    
+    device.addEventListener('gattserverdisconnected', () => {
+        setStatus('Отключено');
+        btnStreamToggle.textContent = "Старт видеопотока";
+        streamActive = false;
+    });
+    
+    setStatus('Подключение GATT...');
+    server = await device.gatt.connect();
+    service = await server.getPrimaryService(NUS_SERVICE);
+    
+    rxChar = await service.getCharacteristic(NUS_RX_CHAR);
+    txChar = await service.getCharacteristic(NUS_TX_CHAR);
+    await txChar.startNotifications();
+    txChar.addEventListener('characteristicvaluechanged', onNotify);
+    
+    // Stream char
+    try {
+        streamChar = await service.getCharacteristic(NUS_STREAM_CHAR);
+        await streamChar.startNotifications();
+        streamChar.addEventListener('characteristicvaluechanged', onStreamData);
+        log('Stream characteristic connected');
+    } catch (e) {
+        log('Warning: Stream characteristic not found');
+    }
+    
+    setStatus('Подключено: ' + (device.name || 'Unknown'));
+    log('Подключено к ' + (device.name || 'Unknown'));
+    
+  } catch (e) {
+    console.warn(e);
+    setStatus('Ошибка: ' + e.message);
+  }
+}
+
+async function classifyImage(img) {
+    if (!trainedModel) return "unknown";
+    const {model, classNames} = trainedModel;
+    
+    const tensor = tf.browser.fromPixels(img)
+        .resizeNearestNeighbor([224, 224])
+        .expandDims(0);
+        
+    const predictions = model.predict(tensor);
+    const data = await predictions.data();
+    tensor.dispose();
+    predictions.dispose();
+    
+    let maxProb = -1;
+    let maxIdx = -1;
+    for(let i=0; i<data.length; i++){
+        if(data[i] > maxProb){
+            maxProb = data[i];
+            maxIdx = i;
+        }
+    }
+    return classNames[maxIdx];
+}
+
+async function handleAiPredict() {
+    // log('[AI] Request received');
+    if (!classifier || classifier.getNumClasses() === 0) {
+        await writeLine({op:'ai_result', class: 'no_model'});
+        return;
+    }
+    
+    if (!cameraPreviewEl.src) {
+        await writeLine({op:'ai_result', class: 'no_image'});
+        return;
+    }
+    
+    try {
+        await ensureImageLoaded(cameraPreviewEl);
+        const result = await classifyImage(cameraPreviewEl);
+        log(`[AI] Class: ${result}`);
+        await writeLine({op:'ai_result', class: result});
+    } catch (e) {
+        log('[AI] Error: ' + e);
+        await writeLine({op:'ai_result', class: 'error'});
+    }
+}
+
+function handleCameraChunk(msg){
+  if (typeof msg.index !== 'number') {
+    return;
+  }
+  if (!msg.final) {
+    cameraChunkStore[msg.index] = msg.data || '';
+    return;
+  }
+  let combined = '';
+  for (let i = 0; i < msg.index; i += 1) {
+    combined += cameraChunkStore[i] || '';
+  }
+  cameraImageBase64 = combined;
+  if (combined) {
+    updateCameraPreview(combined);
+    const approxBytes = Math.floor((combined.length * 3) / 4);
+    updateCameraStatus(`Снимок получен (${formatBytes(approxBytes)})`);
+  } else {
+    updateCameraStatus('Снимок получен');
+  }
+  if (resultsEl) {
+    resultsEl.innerHTML = '';
+  }
+  finishCameraCaptureSuccess(combined);
+}
+
+let cameraInitTimeout = null;
+
+function handleAckMessage(msg){
+  const phase = msg.phase || '';
+  if (phase === 'camera_init') {
+    if (msg.stage === 'received') {
+      updateCameraStatus('Инициализация камеры...');
+      return;
+    }
+    if (cameraInitTimeout) {
+      clearTimeout(cameraInitTimeout);
+      cameraInitTimeout = null;
+    }
+    if (msg.ok) {
+      const framesize = cameraFramesizeEl ? cameraFramesizeEl.value : '';
+      updateCameraStatus(`Камера инициализирована${framesize ? ` (${framesize})` : ''}`);
+      if (cameraInitResolve) {
+        cameraInitResolve(msg);
+        cameraInitResolve = null;
+        cameraInitReject = null;
+      }
+    } else {
+      const errText = msg.err || 'unknown error';
+      updateCameraStatus('Ошибка инициализации камеры: ' + errText);
+      if (cameraInitReject) {
+        cameraInitReject(new Error(errText));
+        cameraInitResolve = null;
+        cameraInitReject = null;
+      }
+    }
+    return;
+  }
+  if (phase === 'stream_start') {
+      if (msg.ok) {
+          streamActive = true;
+          btnStreamToggle.textContent = "Остановить видеопоток";
+          updateCameraStatus("Видеопоток активен");
+      } else {
+          updateCameraStatus("Ошибка старта потока: " + msg.err);
+      }
+  }
+  if (phase === 'stream_stop') {
+      streamActive = false;
+      btnStreamToggle.textContent = "Старт видеопотока";
+      updateCameraStatus("Видеопоток остановлен");
+  }
+  
+  log('[MSG] ' + JSON.stringify(msg));
+}
+
+function onNotify(ev){
+  const v = ev.target.value;
+  const s = decoder.decode(v);
+  s.split('\n').filter(Boolean).forEach(line => {
+    try {
+      const msg = JSON.parse(line);
+      if (msg.op === 'out') {
+        log(msg.s.trimEnd());
+      } else if (msg.op === 'err') {
+        log('[ERR] ' + msg.s.trimEnd());
+      } else if (msg.op === 'camera_chunk') {
+        handleCameraChunk(msg);
+      } else if (msg.op === 'ack') {
+        handleAckMessage(msg);
+      } else if (msg.op === 'ai_predict') {
+        handleAiPredict();
+      } else {
+        log('[MSG] ' + line);
+      }
+    } catch {
+      log('[RAW] ' + line);
+    }
+  });
+}
+
+function onStreamData(event) {
+    const value = new Uint8Array(event.target.value.buffer);
+    
+    const newBuffer = new Uint8Array(streamBuffer.length + value.length);
+    newBuffer.set(streamBuffer);
+    newBuffer.set(value, streamBuffer.length);
+    streamBuffer = newBuffer;
+
+    // Check buffer limits
+    if (streamBuffer.length > 500000) {
+        streamBuffer = new Uint8Array(0); // Reset on overflow
+    }
+
+    // Search for JPEG EOI (FF D9)
+    // Optimization: check new data + 1 byte overlap
+    let eoiIndex = -1;
+    const searchStart = Math.max(0, streamBuffer.length - value.length - 2);
+    
+    for (let i = searchStart; i < streamBuffer.length - 1; i++) {
+        if (streamBuffer[i] === 0xFF && streamBuffer[i+1] === 0xD9) {
+            eoiIndex = i + 1;
+            break;
+        }
+    }
+
+    if (eoiIndex !== -1) {
+        const jpegData = streamBuffer.slice(0, eoiIndex + 1);
+        
+        // Verify SOI (FF D8)
+        if (jpegData[0] === 0xFF && jpegData[1] === 0xD8) {
+            const blob = new Blob([jpegData], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            
+            // Revoke old
+            if (cameraPreviewEl.src && cameraPreviewEl.src.startsWith('blob:')) {
+                URL.revokeObjectURL(cameraPreviewEl.src);
+            }
+            
+            cameraPreviewEl.src = url;
+            cameraPreviewEl.onload = () => {
+                // Ready for processing
+                cameraImageBase64 = "blob"; // Mark as blob available
+            };
+            
+            // If we are training or classifying in loop, we could trigger it here
+            // But for now we use on-demand (buttons or ai_predict op)
+        }
+        
+        streamBuffer = streamBuffer.slice(eoiIndex + 1);
+    }
+}
+
+async function writeLine(obj){
+  const s = JSON.stringify(obj) + '\n';
+  const data = encoder.encode(s);
+  const CHUNK = 180;
+  for (let i=0;i<data.length;i+=CHUNK){
+    const slice = data.slice(i, i+CHUNK);
+    try {
+      if (rxChar.writeValueWithoutResponse) {
+        await rxChar.writeValueWithoutResponse(slice);
+      } else {
+        await rxChar.writeValue(slice);
+      }
+    } catch (e) {
+       // Retry once
+       try { await rxChar.writeValue(slice); } catch (e2) { console.error(e2); }
+    }
+    await new Promise(r => setTimeout(r, 5));
+  }
+}
+
+let cameraInitPromise = null;
+let cameraInitResolve = null;
+let cameraInitReject = null;
+
+async function sendCameraInit(framesize){
+  if (!rxChar) throw new Error('Нет подключения к ESP32');
+  updateCameraStatus('Отправка команды инициализации...');
+  await writeLine({op:'camera_init', config:{framesize}});
+  return new Promise((resolve, reject) => {
+    cameraInitResolve = resolve;
+    cameraInitReject = reject;
+    cameraInitTimeout = setTimeout(() => {
+      cameraInitResolve = null;
+      cameraInitReject = null;
+      reject(new Error('Таймаут инициализации камеры'));
+    }, 30000);
+  });
+}
+
+async function sendCameraDeinit(){
+  if (!rxChar) throw new Error('Нет подключения');
+  await writeLine({op:'camera_deinit'});
+}
+
+async function captureCameraImage(framesize){
+  if (!rxChar) throw new Error('Нет подключения');
+  if (streamActive) throw new Error('Видеопоток активен. Остановите его для одиночного снимка.');
+  
+  cameraCaptureActive = true;
+  cameraChunkStore = {};
+  updateCameraStatus('Запрос изображения...');
+  return new Promise(async (resolve, reject) => {
+    cameraCaptureResolve = resolve;
+    cameraCaptureReject = reject;
+    try {
+      await writeLine({op:'camera_capture', config:{framesize}});
+    } catch (e) {
+      finishCameraCaptureError(e);
+    }
+  });
+}
+
+async function toggleStream() {
+    if (!rxChar) return;
+    if (streamActive) {
+        await writeLine({op: 'stream_stop'});
+    } else {
+        const framesize = cameraFramesizeEl.value;
+        await writeLine({op: 'stream_start', config: {framesize}});
+    }
+}
+
+btnStreamToggle.onclick = toggleStream;
+
+// Dataset collection functions
+function updateDatasetStats(){
+  const statsEl = document.getElementById('datasetStats');
+  if (!statsEl) return;
+  const classCount = Object.keys(dataset).length;
+  const totalSamples = Object.values(dataset).reduce((sum, arr) => sum + arr.length, 0);
+  statsEl.textContent = `Классов: ${classCount}, Всего снимков: ${totalSamples}`;
+}
+
+let addingSample = false;
+
+async function addSampleToClass(){
+  if (addingSample) return;
+  addingSample = true;
+  
+  if (!cameraPreviewEl.src || !mobilenetModel || !classifier) {
+    updateTMStatus('Камера или модель не готовы');
+    addingSample = false;
+    return;
+  }
+  const classNameInput = document.getElementById('classNameInput');
+  const className = (classNameInput.value || '').trim();
+  if (!className) {
+    updateTMStatus('Введите название класса');
+    addingSample = false;
+    return;
+  }
+  try {
+    await ensureImageLoaded(cameraPreviewEl);
+    
+    const img = tf.browser.fromPixels(cameraPreviewEl);
+    const activation = mobilenetModel.infer(img, true);
+    classifier.addExample(activation, className);
+    
+    // Cleanup
+    img.dispose();
+    // activation is managed by classifier? No, we need to dispose if not added? 
+    // knn-classifier docs: "You can dispose the activation tensor after adding it."
+    // But wait, classifier keeps reference. Actually in examples they don't dispose activation immediately?
+    // "The classifier keeps a reference to the activation" - NO, it keeps the values. 
+    // Re-reading docs: "It is the user's responsibility to dispose the input tensor."
+    // Actually classifier.addExample(example, label) - example is a Tensor. 
+    // Let's assume we can dispose it if classifier makes a copy. 
+    // Most examples dispose 'img' but not 'activation' passed to addExample. 
+    // Wait, let's look at ble_teachable.html example:
+    // const activation = net.infer(img, true);
+    // classifier.addExample(activation, classId);
+    // img.dispose();
+    // It does NOT dispose activation.
+    
+    if (!dataset[className]) dataset[className] = 0;
+    dataset[className]++;
+    
+    updateDatasetStats();
+    updateTMStatus(`Добавлен пример: ${className}`);
+  } catch (e) {
+    updateTMStatus('Ошибка: ' + e);
+    console.error(e);
+  } finally {
+    addingSample = false;
+  }
+}
+
+function clearClass(){
+  const className = (document.getElementById('classNameInput').value || '').trim();
+  if (className) {
+      if (classifier.getNumClasses() > 0) {
+          try {
+            classifier.clearClass(className);
+            if(dataset[className]) delete dataset[className];
+            updateDatasetStats();
+            updateTMStatus(`Класс "${className}" очищен`);
+          } catch(e) {
+              // KNN classifier might throw if class doesn't exist
+              updateTMStatus('Класс не найден в модели');
+          }
+      }
+  } else {
+      classifier.clearAllClasses();
+      dataset = {};
+      updateDatasetStats();
+      updateTMStatus('Все классы очищены');
+  }
+}
+
+// Training is instant with KNN
+async function trainModel(){
+    updateTMStatus('KNN модель готова (обучение не требуется)');
+}
+
+function updateDatasetStats(){
+  const statsEl = document.getElementById('datasetStats');
+  if (!statsEl) return;
+  const classes = Object.keys(dataset);
+  const total = Object.values(dataset).reduce((a,b)=>a+b,0);
+  statsEl.textContent = `Классов: ${classes.length}, Примеров: ${total}`;
+}
+
+async function classifyImage(img) {
+    if (!classifier || classifier.getNumClasses() === 0) return "unknown";
+    if (!mobilenetModel) return "loading";
+    
+    const tensor = tf.browser.fromPixels(img);
+    const activation = mobilenetModel.infer(tensor, true);
+    const result = await classifier.predictClass(activation);
+    
+    tensor.dispose();
+    // activation.dispose(); // KNN uses it? No, for prediction it is input. We should dispose.
+    
+    if (result.label) {
+        return result.label;
+    }
+    return "unknown";
+}
+
+document.getElementById('btnAddSample').onclick = addSampleToClass;
+document.getElementById('btnClearClass').onclick = clearClass;
+document.getElementById('btnTrainModel').onclick = trainModel;
+document.getElementById('btnClassify').onclick = async () => {
+    if(cameraPreviewEl.src) {
+        const res = await classifyImage(cameraPreviewEl);
+        updateTMStatus(`Результат: ${res}`);
+    }
+};
+
+// Run code
+document.getElementById('btnRun').onclick = async () => {
+  const code = document.getElementById('code').value;
+  if (!rxChar) { alert('Не подключено'); return; }
+  // Encode to Base64 to avoid JSON escaping issues
+  const b64 = btoa(unescape(encodeURIComponent(code)));
+  log('Запуск кода...');
+  await writeLine({op: 'run', code_b64: b64});
+};
+
+// Upload code (save as program.py)
+async function uploadFile(path, content) {
+  if (!rxChar) throw new Error('Нет подключения');
+  log(`Загрузка ${path} (${content.length} байт)...`);
+  
+  // 1. Start put
+  await writeLine({op: 'put', path: path, size: content.length});
+  // Wait a bit for ACK (simplified)
+  await new Promise(r => setTimeout(r, 200));
+  
+  // 2. Send data chunks
+  const b64 = btoa(unescape(encodeURIComponent(content)));
+  const CHUNK_SIZE = 1000; // Chunk of base64 string
+  const total = b64.length;
+  let offset = 0;
+  
+  while(offset < total) {
+      const chunk = b64.slice(offset, offset + CHUNK_SIZE);
+      await writeLine({op: 'data', b64: chunk});
+      offset += CHUNK_SIZE;
+      const progress = Math.min(100, Math.floor(offset/total*100));
+      setStatus(`Загрузка: ${progress}%`);
+      // Throttle to prevent buffer overflow on ESP32
+      await new Promise(r => setTimeout(r, 100));
+  }
+  
+  // 3. End
+  await writeLine({op: 'end'});
+  log('Загрузка завершена');
+  setStatus('Загрузка завершена');
+}
+
+document.getElementById('btnUpload').onclick = async () => {
+  const code = document.getElementById('code').value;
+  if (!rxChar) { alert('Не подключено'); return; }
+  try {
+    await uploadFile('/program.py', code);
+    alert('Код загружен! Перезагрузите робота или нажмите Reset для автозапуска.');
+  } catch (e) {
+    console.error(e);
+    alert('Ошибка загрузки: ' + e);
+  }
+};
+
+document.getElementById('btnCameraInit').onclick = () => sendCameraInit(cameraFramesizeEl.value);
+document.getElementById('btnCameraDeinit').onclick = sendCameraDeinit;
+document.getElementById('btnCameraCapture').onclick = () => captureCameraImage(cameraFramesizeEl.value);
+document.getElementById('btnLs').onclick = async () => writeLine({op:'ls', path: document.getElementById('lsPath').value});
+document.getElementById('btnRm').onclick = async () => writeLine({op:'rm', path: document.getElementById('rmPath').value});
+
+
+async function initML() {
+    try {
+        log('Загрузка MobileNet и KNN...');
+        classifier = knnClassifier.create();
+        mobilenetModel = await mobilenet.load();
+        log('Модели ML загружены');
+    } catch (e) {
+        log('Ошибка ML: ' + e);
+    }
+}
+
+// Project management
+function saveProject() {
+    const xml = Blockly.Xml.workspaceToDom(workspace);
+    const xmlText = Blockly.Xml.domToText(xml);
+    const project = {
+        xml: xmlText,
+        dataset: dataset,
+    };
+    const blob = new Blob([JSON.stringify(project, null, 2)], {type: 'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'bobot_project.json';
+    a.click();
+}
+
+function loadProject(file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        try {
+            const project = JSON.parse(e.target.result);
+            if (project.xml) {
+                workspace.clear();
+                // Fix for Blockly v10+: use Blockly.utils.xml.textToDom instead of Blockly.Xml.textToDom if deprecated,
+                // but standard usually supports it. Let's verify API.
+                // In recent Blockly versions (including v10), Blockly.Xml might be deprecated in favor of serializers but
+                // textToDom should still exist or be under utils.xml.
+                // Let's try standard approach first, if fails use utils.
+                let xml;
+                if (Blockly.Xml && typeof Blockly.Xml.textToDom === 'function') {
+                    xml = Blockly.Xml.textToDom(project.xml);
+                } else if (Blockly.utils && Blockly.utils.xml && typeof Blockly.utils.xml.textToDom === 'function') {
+                    xml = Blockly.utils.xml.textToDom(project.xml);
+                } else {
+                    throw new Error('Blockly XML parser not found');
+                }
+                
+                if (Blockly.Xml && typeof Blockly.Xml.domToWorkspace === 'function') {
+                    Blockly.Xml.domToWorkspace(xml, workspace);
+                } else {
+                     // Try newer serializer if available? No, Xml should work.
+                     // Fallback to standard call if above check failed differently.
+                     Blockly.Xml.domToWorkspace(xml, workspace);
+                }
+                log('Проект загружен');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Ошибка загрузки проекта: ' + err);
+        }
+    };
+    reader.readAsText(file);
+}
+
+document.getElementById('btnSaveProject').onclick = saveProject;
+document.getElementById('btnLoadProject').onclick = () => document.getElementById('projectInput').click();
+document.getElementById('projectInput').onchange = (e) => {
+    if (e.target.files[0]) loadProject(e.target.files[0]);
+    e.target.value = ''; // Reset
+};
+
+// Helper to create default project
+function loadDefaultProject() {
+    // Logic: 
+    // Loop forever:
+    //   AI Get Class
+    //   If class == "1":
+    //      Motor 1 speed 30
+    //      Motor 2 speed 30
+    //      Sleep 5s
+    //   Else:
+    //      Motor Stop All
+    //   Sleep 1s
+    
+    const xmlText = `<xml xmlns="https://developers.google.com/blockly/xml">
+  <block type="controls_whileUntil" id="loop" x="20" y="20">
+    <field name="MODE">WHILE</field>
+    <value name="BOOL">
+      <block type="logic_boolean">
+        <field name="BOOL">TRUE</field>
+      </block>
+    </value>
+    <statement name="DO">
+      <block type="controls_if" id="if_logic">
+        <mutation else="1"></mutation>
+        <value name="IF0">
+          <block type="logic_compare">
+            <field name="OP">EQ</field>
+            <value name="A">
+              <block type="ai_get_class"></block>
+            </value>
+            <value name="B">
+              <block type="text">
+                <field name="TEXT">1</field>
+              </block>
+            </value>
+          </block>
+        </value>
+        <statement name="DO0">
+          <block type="motor_set_speed">
+            <field name="MOTOR">1</field>
+            <value name="SPEED">
+              <shadow type="math_number">
+                <field name="NUM">30</field>
+              </shadow>
+            </value>
+            <next>
+              <block type="motor_set_speed">
+                <field name="MOTOR">2</field>
+                <value name="SPEED">
+                  <shadow type="math_number">
+                    <field name="NUM">30</field>
+                  </shadow>
+                </value>
+                <next>
+                  <block type="time_sleep">
+                    <field name="UNIT">s</field>
+                    <value name="DURATION">
+                      <shadow type="math_number">
+                        <field name="NUM">5</field>
+                      </shadow>
+                    </value>
+                  </block>
+                </next>
+              </block>
+            </next>
+          </block>
+        </statement>
+        <statement name="ELSE">
+          <block type="motor_stop">
+            <field name="MOTOR">all</field>
+          </block>
+        </statement>
+        <next>
+          <block type="time_sleep">
+            <field name="UNIT">s</field>
+            <value name="DURATION">
+              <shadow type="math_number">
+                <field name="NUM">1</field>
+              </shadow>
+            </value>
+          </block>
+        </next>
+      </block>
+    </statement>
+  </block>
+</xml>`;
+    
+    try {
+        let xml;
+        if (Blockly.Xml && typeof Blockly.Xml.textToDom === 'function') {
+            xml = Blockly.Xml.textToDom(xmlText);
+        } else if (Blockly.utils && Blockly.utils.xml && typeof Blockly.utils.xml.textToDom === 'function') {
+            xml = Blockly.utils.xml.textToDom(xmlText);
+        }
+        if (xml) {
+            Blockly.Xml.domToWorkspace(xml, workspace);
+        }
+    } catch (e) {
+        console.error('Error loading default project', e);
+    }
+}
+
+window.addEventListener('load', () => {
+  initBlockly();
+  initML();
+  updateCameraStatus('Камера не инициализирована');
+  updateDatasetStats();
+  
+  // Load default logic
+  setTimeout(loadDefaultProject, 100);
+
+  const btnConnect = document.getElementById('btnConnect');
+  if (btnConnect) {
+    btnConnect.onclick = async () => {
+      if (!('bluetooth' in navigator)) {
+        alert('Web Bluetooth не поддерживается');
+        return;
+      }
+      try { await connect(); } catch (e) { console.error(e); alert('Ошибка: ' + e); }
+    };
+  }
+});
+</script>
+</body>
+</html>
