@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bobot v2.0 (C++ Edition)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://unpkg.com/blockly@10.0.0/blockly_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/blocks_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/javascript_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/msg/ru.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+  
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+      margin: 0; 
+      padding: 0;
+      color: #111; 
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .header {
+      background: #2c3e50;
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .header h2 { margin: 0; font-size: 18px; }
+    .header button {
+      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .header button:hover { background: rgba(255,255,255,0.3); }
+    .main-container { display: flex; flex: 1; overflow: hidden; }
+    #blocklyDiv { flex: 1; height: 100%; }
+    .sidebar {
+      width: 350px;
+      background: #f5f5f5;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .sidebar-content { padding: 12px; overflow-y: auto; flex: 1; }
+    textarea { width: 100%; height: 150px; font-family: monospace; font-size: 12px; }
+    #cameraPreview { width: 100%; background: #000; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>Bobot v2.0 (C++)</h2>
+    <button id="btnConnect">Подключиться (BLE)</button>
+    <button id="btnUpload">Загрузить сценарий</button>
+    <span id="status">Отключено</span>
+  </div>
+
+  <div class="main-container">
+    <div id="blocklyDiv"></div>
+    <div class="sidebar">
+      <div class="sidebar-content">
+        <h3>Сгенерированный JSON:</h3>
+        <textarea id="code" readonly></textarea>
+        <h3>Камера</h3>
+        <img id="cameraPreview" />
+        <button id="btnStream">Старт/Стоп Видео</button>
+        <hr>
+        <h3>Обучение</h3>
+        <div id="classesContainer"></div>
+        <button id="btnAddClass" style="width:100%; margin-bottom:5px; background:#eee; border:1px solid #ccc">+ Add Class</button>
+        
+        <div style="margin-top:5px;">
+            <label style="font-size:12px">Hidden Units:</label>
+            <select id="selHidden" style="width:100%">
+                <option value="16">16 (Fast)</option>
+                <option value="32" selected>32 (Normal)</option>
+                <option value="64">64 (High Quality)</option>
+            </select>
+        </div>
+        
+        <button id="btnReset" style="width:100%; margin-top:5px; margin-bottom:5px; background:#e67e22; color:white; border:none">Reset Data</button>
+        <button id="btnTrain" style="width:100%">Train (TF.js)</button>
+        <button id="btnExport" style="width:100%; margin-top:5px; font-size:11px; background:#ecf0f1; border:1px solid #ccc; color:#333; cursor:pointer">Export C++ Code (Manual)</button>
+        <textarea id="modelCode" style="width:100%; height:100px; margin-top:5px; font-size:10px; display:none" readonly placeholder="C++ code will appear here..."></textarea>
+        <button id="btnUploadModel" style="width:100%; margin-top:5px; background:#e74c3c; color:white">Upload to Robot</button>
+        <div id="trainLog" style="font-size:10px; color:green; margin-top:5px;"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// --- BLE Configuration ---
+const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_STREAM_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e";
+
+let device, server, service, rxChar, streamChar;
+let streamActive = false;
+
+async function sendCommand(obj) {
+    if (!rxChar) return alert("Not connected");
+    const str = JSON.stringify(obj);
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(str + "\n"));
+}
+
+// --- Blockly Setup ---
+let workspace = Blockly.inject('blocklyDiv', {
+    toolbox: {
+        "kind": "categoryToolbox",
+        "contents": [
+            {
+                "kind": "category",
+                "name": "Logic",
+                "colour": "210",
+                "contents": [
+                    {"kind": "block", "type": "ai_rule"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Robot",
+                "colour": "120",
+                "contents": [
+                    {"kind": "block", "type": "motor_run"}
+                ]
+            }
+        ]
+    }
+});
+
+// Define Custom Blocks
+Blockly.Blocks['ai_rule'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("If AI sees")
+        .appendField(new Blockly.FieldTextInput("Run"), "CLASS");
+    this.appendStatementInput("DO")
+        .setCheck(null)
+        .appendField("Do");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(210);
+  }
+};
+
+Blockly.Blocks['motor_run'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("Motor L")
+        .appendField(new Blockly.FieldNumber(60, -100, 100), "L")
+        .appendField("R")
+        .appendField(new Blockly.FieldNumber(60, -100, 100), "R");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(230);
+  }
+};
+
+// JSON Generator
+Blockly.JavaScript['ai_rule'] = function(block) {
+  var cls = block.getFieldValue('CLASS');
+  var statements_do = Blockly.JavaScript.statementToCode(block, 'DO');
+  // Parse the inner statement (it's a string like "{\"cmd\":\"M\"...},")
+  // We need to clean trailing comma
+  if (statements_do.endsWith(',')) statements_do = statements_do.slice(0, -1);
+  
+  // For simplicity, we support ONE action per rule in this basic version
+  // But statements_do returns raw JSON string of the action
+  
+  return `{"if":"${cls}", "do":${statements_do}},`;
+};
+
+Blockly.JavaScript['motor_run'] = function(block) {
+  var l = block.getFieldValue('L');
+  var r = block.getFieldValue('R');
+  return `{"cmd":"M","l":${l},"r":${r}},`;
+};
+
+function generateJSON() {
+    let code = Blockly.JavaScript.workspaceToCode(workspace);
+    if (code.endsWith(',')) code = code.slice(0, -1);
+    return `{"cmd":"SCRIPT", "rules":[${code}]}`;
+}
+
+function loadDefaultWorkspace() {
+    // Create blocks directly via API to avoid XML issues
+    const r1 = workspace.newBlock('ai_rule');
+    r1.setFieldValue('Run', 'CLASS');
+    r1.initSvg(); r1.render();
+    r1.moveBy(20, 20);
+    
+    const m1 = workspace.newBlock('motor_run');
+    m1.setFieldValue(60, 'L'); m1.setFieldValue(60, 'R');
+    m1.initSvg(); m1.render();
+    r1.getInput('DO').connection.connect(m1.previousConnection);
+    
+    const r2 = workspace.newBlock('ai_rule');
+    r2.setFieldValue('Wait', 'CLASS');
+    r2.initSvg(); r2.render();
+    r1.nextConnection.connect(r2.previousConnection);
+    
+    const m2 = workspace.newBlock('motor_run');
+    m2.setFieldValue(0, 'L'); m2.setFieldValue(0, 'R');
+    m2.initSvg(); m2.render();
+    r2.getInput('DO').connection.connect(m2.previousConnection);
+}
+
+loadDefaultWorkspace();
+
+workspace.addChangeListener(() => {
+    document.getElementById('code').value = generateJSON();
+});
+
+// --- BLE Logic ---
+document.getElementById('btnConnect').onclick = async () => {
+    try {
+        device = await navigator.bluetooth.requestDevice({
+            filters: [{namePrefix: 'Bobot'}],
+            optionalServices: [SERVICE_UUID]
+        });
+        server = await device.gatt.connect();
+        service = await server.getPrimaryService(SERVICE_UUID);
+        rxChar = await service.getCharacteristic(CHAR_RX_UUID);
+        
+        // Stream
+        try {
+            streamChar = await service.getCharacteristic(CHAR_STREAM_UUID);
+            await streamChar.startNotifications();
+            streamChar.addEventListener('characteristicvaluechanged', onStreamData);
+        } catch(e) { console.log("No stream char"); }
+
+        document.getElementById('status').textContent = "Connected";
+    } catch(e) {
+        alert(e);
+    }
+};
+
+document.getElementById('btnUpload').onclick = async () => {
+    if (!rxChar) return alert("Not connected");
+    const json = document.getElementById('code').value;
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(json + "\n"));
+};
+
+document.getElementById('btnStream').onclick = async () => {
+    if (!rxChar) return alert("Not connected");
+    streamActive = !streamActive;
+    const cmd = JSON.stringify({cmd: "S", val: streamActive ? 1 : 0});
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(cmd + "\n"));
+};
+
+let imageBuffer = [];
+const SOI = new Uint8Array([0xFF, 0xD8]);
+const EOI = new Uint8Array([0xFF, 0xD9]);
+
+function onStreamData(event) {
+    const val = new Uint8Array(event.target.value.buffer);
+    
+    // Check if this chunk contains start of image (SOI)
+    // Note: This is a very naive parser. In real life, SOI might be split across chunks.
+    // But for our simple case, we just look for markers.
+    
+    // Append data
+    val.forEach(b => imageBuffer.push(b));
+    
+    // Check for EOI
+    // Search backwards for 0xD9, check if prev is 0xFF
+    if (val.length > 1 && val[val.length-1] === 0xD9 && val[val.length-2] === 0xFF) {
+        // We have a full frame (hopefully)
+        const blob = new Blob([new Uint8Array(imageBuffer)], {type: 'image/jpeg'});
+        const url = URL.createObjectURL(blob);
+        document.getElementById('cameraPreview').src = url;
+        
+        // Clear for next frame
+        imageBuffer = [];
+    } else if (imageBuffer.length > 40000) { // Safety valve
+        imageBuffer = [];
+    }
+}
+
+// --- Training Logic ---
+let trainedModel = null;
+let dataset = { xs: null, ys: null };
+let classes = [
+    {name: "Run", count: 0},
+    {name: "Wait", count: 0}
+];
+
+function renderClasses() {
+    const container = document.getElementById('classesContainer');
+    container.innerHTML = '';
+    classes.forEach((cls, idx) => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '5px';
+        div.innerHTML = `
+            <input type="text" value="${cls.name}" style="width:60px" onchange="updateClassName(${idx}, this.value)">
+            <button onclick="addSample(${idx})">Add</button> 
+            <span id="cnt${idx}">${cls.count}</span>
+            ${idx > 1 ? `<button onclick="removeClass(${idx})" style="color:red; margin-left:5px">x</button>` : ''}
+        `;
+        container.appendChild(div);
+    });
+    
+    // Update Blockly dropdowns if needed? 
+    // Ideally we should update 'ai_rule' blocks to match these classes.
+}
+
+function updateClassName(idx, val) { classes[idx].name = val; }
+
+function removeClass(idx) {
+    // Removing classes invalidates dataset!
+    if(dataset.xs) {
+        alert("Resetting dataset because class structure changed");
+        document.getElementById('btnReset').click();
+    }
+    classes.splice(idx, 1);
+    renderClasses();
+}
+
+document.getElementById('btnAddClass').onclick = () => {
+    classes.push({name: "Class " + (classes.length+1), count: 0});
+    renderClasses();
+};
+
+async function addSample(idx) {
+    const img = document.getElementById('cameraPreview');
+    if(!img.src) return;
+    
+    const t = tf.tidy(() => {
+        const raw = tf.browser.fromPixels(img);
+        const resized = tf.image.resizeBilinear(raw, [120, 160]); 
+        const gray = resized.mean(2).div(255.0).reshape([1, 19200]);
+        return gray;
+    });
+    
+    const y = tf.tidy(() => tf.oneHot(idx, classes.length).reshape([1, classes.length]));
+    
+    if(dataset.xs == null) {
+        dataset.xs = t;
+        dataset.ys = y;
+    } else {
+        // Check if num classes matches
+        if (dataset.ys.shape[1] !== classes.length) {
+            alert("Class count changed! Resetting data.");
+            document.getElementById('btnReset').click();
+            return;
+        }
+        
+        const oldX = dataset.xs;
+        const oldY = dataset.ys;
+        dataset.xs = oldX.concat(t, 0);
+        dataset.ys = oldY.concat(y, 0);
+        oldX.dispose(); oldY.dispose();
+        t.dispose(); y.dispose();
+    }
+    
+    classes[idx].count++;
+    renderClasses(); // Refresh counts
+}
+
+document.getElementById('btnReset').onclick = () => {
+    if(dataset.xs) {
+        dataset.xs.dispose();
+        dataset.ys.dispose();
+        dataset.xs = null;
+        dataset.ys = null;
+    }
+    classes.forEach(c => c.count = 0);
+    renderClasses();
+};
+
+document.getElementById('btnTrain').onclick = async () => {
+    if(!dataset.xs) return alert("No data!");
+    document.getElementById('trainLog').textContent = "Training...";
+    
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    
+    const model = tf.sequential();
+    model.add(tf.layers.dense({units: HIDDEN_UNITS, inputShape: [19200], activation: 'relu'}));
+    model.add(tf.layers.dense({units: classes.length, activation: 'softmax'})); // Dynamic output
+    model.compile({optimizer: 'adam', loss: 'categoricalCrossentropy', metrics:['accuracy']});
+    
+    await model.fit(dataset.xs, dataset.ys, {
+        epochs: 50,
+        callbacks: {
+            onEpochEnd: (epoch, logs) => {
+                document.getElementById('trainLog').textContent = `Ep: ${epoch} Acc: ${logs.acc.toFixed(2)}`;
+            }
+        }
+    });
+    
+    trainedModel = model;
+    alert("Training Complete!");
+};
+
+// Init
+renderClasses();
+
+// ... Export logic needs update too ...
+
+document.getElementById('btnExport').onclick = () => {
+    if(!trainedModel) return alert("Train first!");
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    
+    const w1 = trainedModel.layers[0].getWeights()[0].dataSync();
+    const b1 = trainedModel.layers[0].getWeights()[1].dataSync();
+    const w2 = trainedModel.layers[1].getWeights()[0].dataSync();
+    const b2 = trainedModel.layers[1].getWeights()[1].dataSync();
+    
+    const fmt = (arr) => "{" + Array.from(arr).map(n => n.toFixed(4)).join(",") + "}";
+    
+    const clsStr = classes.map(c => `"${c.name}"`).join(", ");
+    
+    let c = `void loadModel(TinyModel& model) {\n`;
+    c += `  model.input_dim = 19200; model.hidden_dim = ${HIDDEN_UNITS}; model.output_dim = ${classes.length};\n`;
+    c += `  model.classes = {${clsStr}};\n`;
+    c += `  model.w1 = ${fmt(w1)};\n`;
+    c += `  model.b1 = ${fmt(b1)};\n`;
+    c += `  model.w2 = ${fmt(w2)};\n`;
+    c += `  model.b2 = ${fmt(b2)};\n`;
+    c += `  model.loaded = true;\n`;
+    c += `}\n`;
+    
+    const ta = document.getElementById('modelCode');
+    ta.style.display = 'block';
+    ta.value = c;
+    alert("C++ Code generated in the training panel!");
+};
+
+document.getElementById('btnUploadModel').onclick = async () => {
+    if(!trainedModel) return alert("Train first!");
+    if(!rxChar) return alert("Connect BLE first!");
+    
+    // 0. Send Config (Classes + Hidden Dim)
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    const classNames = classes.map(c => c.name);
+    const configCmd = {
+        "cmd": "CONFIG_MODEL",
+        "classes": classNames,
+        "hid": HIDDEN_UNITS
+    };
+    await sendCommand(configCmd);
+    await new Promise(r => setTimeout(r, 300));
+    
+    // 1. Extract Weights
+    const w1 = trainedModel.layers[0].getWeights()[0].dataSync();
+    const b1 = trainedModel.layers[0].getWeights()[1].dataSync();
+    const w2 = trainedModel.layers[1].getWeights()[0].dataSync();
+    const b2 = trainedModel.layers[1].getWeights()[1].dataSync();
+    
+    // Helper: Compress to Int8 and get Scale
+    const compress = (data) => {
+        let min = Infinity, max = -Infinity;
+        for(let n of data) { if(n<min) min=n; if(n>max) max=n; }
+        const scale = Math.max(Math.abs(min), Math.abs(max)) / 127.0;
+        const int8 = new Int8Array(data.length);
+        if (scale === 0) return {data: int8, scale: 1.0};
+        for(let i=0; i<data.length; i++) int8[i] = Math.round(data[i] / scale);
+        return {data: int8, scale: scale};
+    };
+    
+    const c_w1 = compress(w1);
+    const c_b1 = compress(b1);
+    const c_w2 = compress(w2);
+    const c_b2 = compress(b2);
+    
+    // 2. Pack Packet
+    // Header: 4 scales (float32)
+    // Body: Concatenated Int8 arrays
+    const totalSize = 16 + c_w1.data.length + c_b1.data.length + c_w2.data.length + c_b2.data.length;
+    const buffer = new Uint8Array(totalSize);
+    const view = new DataView(buffer.buffer);
+    
+    let off = 0;
+    view.setFloat32(off, c_w1.scale, true); off+=4;
+    view.setFloat32(off, c_b1.scale, true); off+=4;
+    view.setFloat32(off, c_w2.scale, true); off+=4;
+    view.setFloat32(off, c_b2.scale, true); off+=4;
+    
+    buffer.set(new Uint8Array(c_w1.data.buffer), off); off += c_w1.data.length;
+    buffer.set(new Uint8Array(c_b1.data.buffer), off); off += c_b1.data.length;
+    buffer.set(new Uint8Array(c_w2.data.buffer), off); off += c_w2.data.length;
+    buffer.set(new Uint8Array(c_b2.data.buffer), off); off += c_b2.data.length;
+    
+    console.log("Compressed Model size:", totalSize);
+    
+    // 3. Send Start Command
+    const enc = new TextEncoder();
+    // Send size explicitly
+    const cmd = JSON.stringify({cmd: "UL_START", size: totalSize});
+    await rxChar.writeValue(enc.encode(cmd + '\n'));
+    await new Promise(r => setTimeout(r, 200)); 
+    
+    // 4. Send Chunks
+    const CHUNK_SIZE = 256; 
+    document.getElementById('trainLog').textContent = "Uploading " + (buffer.length/1024).toFixed(1) + " KB...";
+    
+    for(let i=0; i<buffer.length; i+=CHUNK_SIZE) {
+        const chunk = buffer.slice(i, i+CHUNK_SIZE);
+        await rxChar.writeValue(chunk);
+        if(i % 5000 === 0) await new Promise(r => setTimeout(r, 10));
+    }
+    
+    document.getElementById('trainLog').textContent = "Upload Complete!";
+    alert("Model Uploaded to Robot!");
+};
+
+</script>
+</body>
+</html>
+
