@@ -7,7 +7,9 @@
   <script src="https://unpkg.com/blockly@10.0.0/blockly_compressed.js"></script>
   <script src="https://unpkg.com/blockly@10.0.0/blocks_compressed.js"></script>
   <script src="https://unpkg.com/blockly@10.0.0/javascript_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/python_compressed.js"></script>
   <script src="https://unpkg.com/blockly@10.0.0/msg/ru.js"></script>
+
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
@@ -236,6 +238,14 @@ function switchTab(mode) {
     } else {
         document.getElementById('blocklyDiv').style.visibility = 'hidden';
         document.getElementById('pythonDiv').style.visibility = 'visible';
+        
+        // Generate Python code from Blocks
+        const pyCode = generatePythonFromWorkspace();
+        // Only update if not empty (or maybe always? blocks usually truth)
+        if (pyCode) {
+            document.getElementById('pythonEditor').value = pyCode;
+        }
+        
         updatePythonJSON();
     }
 }
@@ -459,6 +469,52 @@ Blockly.Blocks['motor_run'] = {
   }
 };
 
+// Custom Python generator
+// Ensure generators are defined before use
+if (!Blockly.Python) Blockly.Python = new Blockly.Generator('Python');
+
+Blockly.Python['ai_rule'] = function(block) {
+  var cls = block.getFieldValue('CLASS');
+  var statements_do = Blockly.Python.statementToCode(block, 'DO');
+  return `if ai.sees("${cls}"):\n${statements_do || '    pass\n'}`;
+};
+
+Blockly.Python['sensor_rule'] = function(block) {
+  var sensor = block.getFieldValue('SENSOR');
+  var op = block.getFieldValue('OP');
+  var val = block.getFieldValue('VAL');
+  var statements_do = Blockly.Python.statementToCode(block, 'DO');
+  
+  // Map op
+  let pyOp = '==';
+  if (op === 'gt') pyOp = '>';
+  if (op === 'lt') pyOp = '<';
+  if (op === 'eq') pyOp = '=='; // Should use approx check for floats but simple for now
+  
+  return `if sensors.${sensor} ${pyOp} ${val}:\n${statements_do || '    pass\n'}`;
+};
+
+Blockly.Python['motor_run'] = function(block) {
+  var l = block.getFieldValue('L');
+  var r = block.getFieldValue('R');
+  return `motor.run(${l}, ${r})\n`;
+};
+
+Blockly.Python['time_sleep'] = function(block) {
+  var duration = Blockly.Python.valueToCode(block, 'DURATION', Blockly.Python.ORDER_ATOMIC) || '0';
+  var unit = block.getFieldValue('UNIT');
+  // Simple approximation if value is number, otherwise complex expression
+  // Since we don't have full python env, let's keep it simple
+  if (unit === 'ms') {
+      return `time.sleep(${duration}/1000.0)\n`;
+  }
+  return `time.sleep(${duration})\n`;
+};
+
+function generatePythonFromWorkspace() {
+    return Blockly.Python.workspaceToCode(workspace);
+}
+
 // JSON Generator
 Blockly.JavaScript['ai_rule'] = function(block) {
   var cls = block.getFieldValue('CLASS');
@@ -514,6 +570,7 @@ function generateJSON() {
 }
 
 function loadDefaultWorkspace() {
+    // Create blocks directly via API to avoid XML issues
     const r1 = workspace.newBlock('ai_rule');
     r1.setFieldValue('Run', 'CLASS');
     r1.initSvg(); r1.render();
@@ -537,9 +594,16 @@ function loadDefaultWorkspace() {
 
 loadDefaultWorkspace();
 
-workspace.addChangeListener(() => {
-    if (currentMode === 'blocks') {
-        document.getElementById('code').value = generateJSON();
+workspace.addChangeListener((event) => {
+    // Only update on meaningful events (not just UI clicks)
+    if (event.type === Blockly.Events.BLOCK_CHANGE || 
+        event.type === Blockly.Events.BLOCK_MOVE || 
+        event.type === Blockly.Events.BLOCK_DELETE ||
+        event.type === Blockly.Events.BLOCK_CREATE) {
+            
+        if (currentMode === 'blocks') {
+            document.getElementById('code').value = generateJSON();
+        }
     }
 });
 
