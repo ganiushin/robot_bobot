@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bobot v2.2 (Python + C++)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://unpkg.com/blockly@10.0.0/blockly_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/blocks_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/javascript_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/msg/ru.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+  
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+      margin: 0; 
+      padding: 0;
+      color: #111; 
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .header {
+      background: #2c3e50;
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .header h2 { margin: 0; font-size: 18px; }
+    .header button {
+      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .header button:hover { background: rgba(255,255,255,0.3); }
+    
+    .tabs {
+        display: flex;
+        background: #34495e;
+        padding: 0 16px;
+    }
+    .tab {
+        padding: 10px 20px;
+        color: #ddd;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        font-size: 14px;
+    }
+    .tab.active {
+        color: white;
+        border-bottom: 2px solid #3498db;
+        background: #2c3e50;
+    }
+    
+    .main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+    #blocklyDiv { position: absolute; top:0; left:0; right:350px; bottom:0; visibility: visible; }
+    #pythonDiv { position: absolute; top:0; left:0; right:350px; bottom:0; visibility: hidden; background: #282c34; color: #abb2bf; padding: 0; display:flex; flex-direction:column;}
+    
+    #pythonEditor {
+        flex: 1;
+        width: 100%;
+        background: transparent;
+        color: inherit;
+        border: none;
+        padding: 20px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        resize: none;
+        outline: none;
+    }
+    
+    .sidebar {
+      width: 350px;
+      background: #f5f5f5;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+    }
+    .sidebar-content { padding: 12px; overflow-y: auto; flex: 1; }
+    textarea.json-out { width: 100%; height: 100px; font-family: monospace; font-size: 12px; }
+    #cameraPreview { width: 100%; background: #000; border-radius: 4px; margin-bottom: 8px; }
+
+    /* Modern Button Styles */
+    .btn {
+      display: inline-block;
+      font-weight: 500;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: middle;
+      user-select: none;
+      border: 1px solid transparent;
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      border-radius: 6px;
+      transition: all 0.2s ease-in-out;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .btn:disabled { opacity: 0.65; cursor: not-allowed; }
+    .btn:active { transform: translateY(1px); box-shadow: none; }
+    
+    .btn-primary { color: #fff; background-color: #3498db; border-color: #3498db; }
+    .btn-primary:hover { background-color: #2980b9; border-color: #2980b9; }
+
+    .btn-success { color: #fff; background-color: #2ecc71; border-color: #2ecc71; }
+    .btn-success:hover { background-color: #27ae60; border-color: #27ae60; }
+
+    .btn-danger { color: #fff; background-color: #e74c3c; border-color: #e74c3c; }
+    .btn-danger:hover { background-color: #c0392b; border-color: #c0392b; }
+
+    .btn-secondary { color: #fff; background-color: #95a5a6; border-color: #95a5a6; }
+    .btn-secondary:hover { background-color: #7f8c8d; border-color: #7f8c8d; }
+    
+    .btn-outline-secondary { color: #7f8c8d; border-color: #bdc3c7; background: transparent; border-style: dashed; }
+    .btn-outline-secondary:hover { color: #34495e; border-color: #34495e; background-color: rgba(0,0,0,0.03); }
+
+    .btn-group { display: flex; gap: 8px; margin-bottom: 8px; }
+    .btn-group .btn { margin-bottom: 0; }
+    
+    label { font-weight: 500; font-size: 13px; color: #555; }
+    select { 
+        width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ddd; 
+        background-color: white; font-size: 13px; margin-top: 4px;
+    }
+
+    hr { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>Bobot v2.2 (Python + C++)</h2>
+    <button id="btnConnect">Подключиться (BLE)</button>
+    <button id="btnUpload">Загрузить сценарий</button>
+    <span id="status">Отключено</span>
+  </div>
+  
+  <div class="tabs">
+      <div class="tab active" onclick="switchTab('blocks')">Blockly</div>
+      <div class="tab" onclick="switchTab('python')">Python Code</div>
+  </div>
+
+  <div class="main-container">
+    <div id="blocklyDiv"></div>
+    <div id="pythonDiv">
+        <div style="padding:10px; background:#21252b; font-size:12px; color:#888;">
+            Write your logic here.<br>
+            Supported AI: <b>if ai.sees("Class"): ...</b><br>
+            Supported Sensors: <b>if sensors.temp > 25: ...</b> (temp, hum, press, light)<br>
+            IMU/Mag: <b>sensors.gyro_x, sensors.mag_z, ...</b><br>
+            Supported Motors: <b>motor.run(L, R)</b>
+        </div>
+        <textarea id="pythonEditor" spellcheck="false">
+# Robot Logic in Python
+
+if ai.sees("Run"):
+    motor.run(60, 60)
+elif ai.sees("Wait"):
+    motor.run(0, 0)
+    
+# Sensor Example:
+# if sensors.temp > 30:
+#     motor.run(0, 0)
+</textarea>
+    </div>
+    
+    <div class="sidebar">
+      <div class="sidebar-content">
+        <h3>Сгенерированный JSON:</h3>
+        <textarea id="code" class="json-out" readonly></textarea>
+        <h3>Камера</h3>
+        <img id="cameraPreview" />
+        <button id="btnStream" class="btn btn-primary">Старт/Стоп Видео</button>
+        <hr>
+        <h3>Обучение</h3>
+        <div id="classesContainer"></div>
+        <button id="btnAddClass" class="btn btn-outline-secondary">+ Добавить класс</button>
+        
+        <div style="margin: 15px 0;">
+            <label>Параметры нейросети (Hidden Units):</label>
+            <select id="selHidden">
+                <option value="16">16 (Быстро / Низкая точность)</option>
+                <option value="32" selected>32 (Баланс)</option>
+                <option value="64">64 (Медленно / Высокая точность)</option>
+            </select>
+        </div>
+        
+        <div class="btn-group">
+            <button id="btnReset" class="btn btn-danger">Сброс данных</button>
+            <button id="btnTrain" class="btn btn-primary">Обучить модель</button>
+        </div>
+
+        <button id="btnUploadModel" class="btn btn-success" style="padding: 12px; font-weight: bold; font-size: 15px; margin-top: 10px;">Загрузить на робота</button>
+        
+        <div id="trainLog" style="font-size:12px; color:#27ae60; margin:10px 0; font-weight:bold; min-height:18px; text-align:center;"></div>
+        
+        <button id="btnExport" class="btn btn-secondary" style="font-size:12px; padding:6px; margin-top:20px; opacity:0.7">Экспорт кода C++ (Вручную)</button>
+        <textarea id="modelCode" style="width:100%; height:100px; margin-top:5px; font-size:10px; display:none; border:1px solid #ddd; padding:5px" readonly placeholder="C++ code will appear here..."></textarea>
+      </div>
+    </div>
+  </div>
+
+<script>
+// --- Mode Switching ---
+let currentMode = 'blocks';
+
+function switchTab(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    if (mode === 'blocks') {
+        document.getElementById('blocklyDiv').style.visibility = 'visible';
+        document.getElementById('pythonDiv').style.visibility = 'hidden';
+        // Regenerate JSON from blocks
+        document.getElementById('code').value = generateJSON();
+    } else {
+        document.getElementById('blocklyDiv').style.visibility = 'hidden';
+        document.getElementById('pythonDiv').style.visibility = 'visible';
+        updatePythonJSON();
+    }
+}
+
+document.getElementById('pythonEditor').addEventListener('input', updatePythonJSON);
+
+function updatePythonJSON() {
+    if (currentMode === 'python') {
+        try {
+            const py = document.getElementById('pythonEditor').value;
+            const json = parsePythonToJSON(py);
+            document.getElementById('code').value = json;
+        } catch(e) {
+            document.getElementById('code').value = "Error parsing Python: " + e.message;
+        }
+    }
+}
+
+// --- Enhanced Python Parser ---
+function parsePythonToJSON(text) {
+    const lines = text.split('\n');
+    let rules = [];
+    let currentRule = null;
+    
+    for(let line of lines) {
+        line = line.trim();
+        if (!line || line.startsWith('#')) continue;
+        
+        // 1. Match AI condition: if ai.sees("Label"):
+        const matchAi = line.match(/^(if|elif)\s+ai\.sees\s*\(\s*["'](.+?)["']\s*\)\s*:/);
+        if (matchAi) {
+            const label = matchAi[2];
+            currentRule = { "if": label, "do": {} }; // Legacy string format for AI
+            rules.push(currentRule);
+            continue;
+        }
+        
+        // 2. Match Sensor condition: if sensors.temp > 25:
+        // Format: if sensors.(name) (op) (val):
+        const matchSensor = line.match(/^(if|elif)\s+sensors\.(\w+)\s*([><=!]+)\s*(-?\d+(\.\d+)?)\s*:/);
+        if (matchSensor) {
+            const sensor = matchSensor[2];
+            const op = matchSensor[3];
+            const val = parseFloat(matchSensor[4]);
+            
+            // Map python op to json op
+            let jsonOp = "eq";
+            if (op === '>') jsonOp = "gt";
+            if (op === '<') jsonOp = "lt";
+            if (op === '>=') jsonOp = "gte";
+            if (op === '<=') jsonOp = "lte";
+            if (op === '==') jsonOp = "eq";
+            
+            currentRule = { 
+                "if": { "type": "sensor", "sensor": sensor, "op": jsonOp, "val": val },
+                "do": {} 
+            };
+            rules.push(currentRule);
+            continue;
+        }
+        
+        // Match action (inside a rule)
+        if (currentRule) {
+            const matchMotor = line.match(/motor\.run\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/);
+            if (matchMotor) {
+                currentRule.do = {
+                    "cmd": "M",
+                    "l": parseInt(matchMotor[1]),
+                    "r": parseInt(matchMotor[2])
+                };
+            }
+            const matchSleep = line.match(/(?:^|\s)(?:time\.)?sleep\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)/);
+            if (matchSleep) {
+                const sec = parseFloat(matchSleep[1]);
+                currentRule.do = {
+                    "cmd": "T",
+                    "ms": Math.round(sec * 1000)
+                };
+            }
+        }
+    }
+    
+    return JSON.stringify({
+        "cmd": "SCRIPT",
+        "rules": rules
+    });
+}
+
+// --- BLE Configuration ---
+const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_STREAM_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e";
+
+let device, server, service, rxChar, streamChar;
+let streamActive = false;
+
+async function sendCommand(obj) {
+    if (!rxChar) return alert("Not connected");
+    const str = JSON.stringify(obj);
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(str + "\n"));
+}
+
+// --- Blockly Setup ---
+let workspace = Blockly.inject('blocklyDiv', {
+    toolbox: {
+        "kind": "categoryToolbox",
+        "contents": [
+            {
+                "kind": "category",
+                "name": "Основные",
+                "colour": "%{BKY_LOOPS_HUE}",
+                "contents": [
+                    {"kind": "block", "type": "controls_if"},
+                    {"kind": "block", "type": "controls_repeat_ext"},
+                    {"kind": "block", "type": "controls_whileUntil"},
+                    {"kind": "block", "type": "controls_for"},
+                    {"kind": "block", "type": "controls_flow_statements"},
+                    {"kind": "block", "type": "logic_compare"},
+                    {"kind": "block", "type": "logic_operation"},
+                    {"kind": "block", "type": "logic_boolean"},
+                    {"kind": "block", "type": "math_number"},
+                    {"kind": "block", "type": "text"},
+                    {"kind": "block", "type": "variables_get"},
+                    {"kind": "block", "type": "variables_set"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "AI",
+                "colour": "210",
+                "contents": [
+                    {"kind": "block", "type": "ai_rule"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Sensors",
+                "colour": "180",
+                "contents": [
+                    {"kind": "block", "type": "sensor_rule"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Robot",
+                "colour": "120",
+                "contents": [
+                    {"kind": "block", "type": "motor_run"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Time",
+                "colour": "#5C5CA6",
+                "contents": [
+                    {"kind": "block", "type": "time_sleep"}
+                ]
+            }
+        ]
+    }
+});
+
+// Define Custom Blocks
+Blockly.Blocks['ai_rule'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("If AI sees")
+        .appendField(new Blockly.FieldTextInput("Run"), "CLASS");
+    this.appendStatementInput("DO")
+        .setCheck(null)
+        .appendField("Do");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(210);
+  }
+};
+
+Blockly.Blocks['sensor_rule'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("If Sensor")
+        .appendField(new Blockly.FieldDropdown([
+            ["Temperature", "temp"],
+            ["Humidity", "hum"],
+            ["Pressure", "press"],
+            ["Light", "light"],
+            ["Gyro X", "gyro_x"],
+            ["Gyro Y", "gyro_y"],
+            ["Gyro Z", "gyro_z"],
+            ["Mag X", "mag_x"],
+            ["Mag Y", "mag_y"],
+            ["Mag Z", "mag_z"]
+        ]), "SENSOR")
+        .appendField(new Blockly.FieldDropdown([
+            [">", "gt"],
+            ["<", "lt"],
+            ["=", "eq"]
+        ]), "OP")
+        .appendField(new Blockly.FieldNumber(25), "VAL");
+    this.appendStatementInput("DO")
+        .setCheck(null)
+        .appendField("Do");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(180);
+  }
+};
+
+Blockly.Blocks['motor_run'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("Motor L")
+        .appendField(new Blockly.FieldNumber(60, -100, 100), "L")
+        .appendField("R")
+        .appendField(new Blockly.FieldNumber(60, -100, 100), "R");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(230);
+  }
+};
+
+// JSON Generator
+Blockly.JavaScript['ai_rule'] = function(block) {
+  var cls = block.getFieldValue('CLASS');
+  var statements_do = Blockly.JavaScript.statementToCode(block, 'DO');
+  if (statements_do.endsWith(',')) statements_do = statements_do.slice(0, -1);
+  return `{"if":"${cls}", "do":${statements_do}},`;
+};
+
+Blockly.JavaScript['sensor_rule'] = function(block) {
+  var sensor = block.getFieldValue('SENSOR');
+  var op = block.getFieldValue('OP');
+  var val = block.getFieldValue('VAL');
+  var statements_do = Blockly.JavaScript.statementToCode(block, 'DO');
+  if (statements_do.endsWith(',')) statements_do = statements_do.slice(0, -1);
+  
+  return `{"if":{"type":"sensor","sensor":"${sensor}","op":"${op}","val":${val}}, "do":${statements_do}},`;
+};
+
+Blockly.JavaScript['motor_run'] = function(block) {
+  var l = block.getFieldValue('L');
+  var r = block.getFieldValue('R');
+  return `{"cmd":"M","l":${l},"r":${r}},`;
+};
+
+// Time block
+Blockly.Blocks['time_sleep'] = {
+  init: function() {
+    this.appendValueInput("DURATION")
+        .setCheck("Number")
+        .appendField("Ждать");
+    this.appendDummyInput()
+        .appendField(new Blockly.FieldDropdown([["секунд", "s"], ["миллисекунд", "ms"]]), "UNIT");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(230);
+    this.setTooltip("Ожидает указанное время");
+  }
+};
+
+Blockly.JavaScript['time_sleep'] = function(block) {
+  const duration = Blockly.JavaScript.valueToCode(block, 'DURATION', Blockly.JavaScript.ORDER_ATOMIC) || '0';
+  const unit = block.getFieldValue('UNIT');
+  const ms = unit === 's' ? `(${duration})*1000` : `(${duration})`;
+  return `{"cmd":"T","ms":${ms}},`;
+};
+
+function generateJSON() {
+    if (currentMode === 'python') return document.getElementById('code').value;
+    
+    let code = Blockly.JavaScript.workspaceToCode(workspace);
+    if (code.endsWith(',')) code = code.slice(0, -1);
+    return `{"cmd":"SCRIPT", "rules":[${code}]}`;
+}
+
+function loadDefaultWorkspace() {
+    const r1 = workspace.newBlock('ai_rule');
+    r1.setFieldValue('Run', 'CLASS');
+    r1.initSvg(); r1.render();
+    r1.moveBy(20, 20);
+    
+    const m1 = workspace.newBlock('motor_run');
+    m1.setFieldValue(60, 'L'); m1.setFieldValue(60, 'R');
+    m1.initSvg(); m1.render();
+    r1.getInput('DO').connection.connect(m1.previousConnection);
+    
+    const r2 = workspace.newBlock('ai_rule');
+    r2.setFieldValue('Wait', 'CLASS');
+    r2.initSvg(); r2.render();
+    r1.nextConnection.connect(r2.previousConnection);
+    
+    const m2 = workspace.newBlock('motor_run');
+    m2.setFieldValue(0, 'L'); m2.setFieldValue(0, 'R');
+    m2.initSvg(); m2.render();
+    r2.getInput('DO').connection.connect(m2.previousConnection);
+}
+
+loadDefaultWorkspace();
+
+workspace.addChangeListener(() => {
+    if (currentMode === 'blocks') {
+        document.getElementById('code').value = generateJSON();
+    }
+});
+
+// --- BLE Logic ---
+document.getElementById('btnConnect').onclick = async () => {
+    try {
+        device = await navigator.bluetooth.requestDevice({
+            filters: [{namePrefix: 'Bobot'}],
+            optionalServices: [SERVICE_UUID]
+        });
+        server = await device.gatt.connect();
+        service = await server.getPrimaryService(SERVICE_UUID);
+        rxChar = await service.getCharacteristic(CHAR_RX_UUID);
+        
+        try {
+            streamChar = await service.getCharacteristic(CHAR_STREAM_UUID);
+            await streamChar.startNotifications();
+            streamChar.addEventListener('characteristicvaluechanged', onStreamData);
+        } catch(e) { console.log("No stream char"); }
+
+        document.getElementById('status').textContent = "Connected";
+    } catch(e) {
+        alert(e);
+    }
+};
+
+document.getElementById('btnUpload').onclick = async () => {
+    if (!rxChar) return alert("Not connected");
+    if (currentMode === 'python') updatePythonJSON();
+    
+    const json = document.getElementById('code').value;
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(json + "\n"));
+    alert("Script uploaded!");
+};
+
+document.getElementById('btnStream').onclick = async () => {
+    if (!rxChar) return alert("Not connected");
+    streamActive = !streamActive;
+    const cmd = JSON.stringify({cmd: "S", val: streamActive ? 1 : 0});
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(cmd + "\n"));
+};
+
+let imageBuffer = [];
+const SOI = new Uint8Array([0xFF, 0xD8]);
+const EOI = new Uint8Array([0xFF, 0xD9]);
+
+function onStreamData(event) {
+    const val = new Uint8Array(event.target.value.buffer);
+    val.forEach(b => imageBuffer.push(b));
+    if (val.length > 1 && val[val.length-1] === 0xD9 && val[val.length-2] === 0xFF) {
+        const blob = new Blob([new Uint8Array(imageBuffer)], {type: 'image/jpeg'});
+        const url = URL.createObjectURL(blob);
+        document.getElementById('cameraPreview').src = url;
+        imageBuffer = [];
+    } else if (imageBuffer.length > 40000) {
+        imageBuffer = [];
+    }
+}
+
+// --- Training Logic ---
+let trainedModel = null;
+let dataset = { xs: null, ys: null };
+let classes = [
+    {name: "Run", count: 0},
+    {name: "Wait", count: 0}
+];
+
+function renderClasses() {
+    const container = document.getElementById('classesContainer');
+    container.innerHTML = '';
+    classes.forEach((cls, idx) => {
+        const div = document.createElement('div');
+        div.style.marginBottom = '8px';
+        div.innerHTML = `
+            <div style="display:flex; align-items:center; gap:5px;">
+                <input type="text" value="${cls.name}" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:4px; font-size:13px" onchange="updateClassName(${idx}, this.value)">
+                <span id="cnt${idx}" style="font-size:12px; font-weight:bold; min-width:25px; text-align:center; background:#eee; padding:4px; border-radius:4px">${cls.count}</span>
+                <button class="btn btn-primary" style="width:auto; margin:0; padding:6px 10px; font-size:16px; line-height:1" onclick="addSample(${idx})" title="Сделать снимок">📷</button> 
+                ${idx > 1 ? `<button class="btn btn-danger" style="width:auto; margin:0; padding:6px 10px; font-size:16px; line-height:1" onclick="removeClass(${idx})" title="Удалить класс">×</button>` : ''}
+            </div>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function updateClassName(idx, val) { classes[idx].name = val; }
+
+function removeClass(idx) {
+    if(dataset.xs) {
+        alert("Resetting dataset because class structure changed");
+        document.getElementById('btnReset').click();
+    }
+    classes.splice(idx, 1);
+    renderClasses();
+}
+
+document.getElementById('btnAddClass').onclick = () => {
+    classes.push({name: "Class " + (classes.length+1), count: 0});
+    renderClasses();
+};
+
+async function addSample(idx) {
+    const img = document.getElementById('cameraPreview');
+    if(!img.src) return;
+    
+    const t = tf.tidy(() => {
+        const raw = tf.browser.fromPixels(img);
+        const resized = tf.image.resizeBilinear(raw, [120, 160]); 
+        const gray = resized.mean(2).div(255.0).reshape([1, 19200]);
+        return gray;
+    });
+    
+    const y = tf.tidy(() => tf.oneHot(idx, classes.length).reshape([1, classes.length]));
+    
+    if(dataset.xs == null) {
+        dataset.xs = t;
+        dataset.ys = y;
+    } else {
+        if (dataset.ys.shape[1] !== classes.length) {
+            alert("Class count changed! Resetting data.");
+            document.getElementById('btnReset').click();
+            return;
+        }
+        
+        const oldX = dataset.xs;
+        const oldY = dataset.ys;
+        dataset.xs = oldX.concat(t, 0);
+        dataset.ys = oldY.concat(y, 0);
+        oldX.dispose(); oldY.dispose();
+        t.dispose(); y.dispose();
+    }
+    
+    classes[idx].count++;
+    renderClasses(); 
+}
+
+document.getElementById('btnReset').onclick = () => {
+    if(dataset.xs) {
+        dataset.xs.dispose();
+        dataset.ys.dispose();
+        dataset.xs = null;
+        dataset.ys = null;
+    }
+    classes.forEach(c => c.count = 0);
+    renderClasses();
+};
+
+document.getElementById('btnTrain').onclick = async () => {
+    if(!dataset.xs) return alert("No data!");
+    document.getElementById('trainLog').textContent = "Training...";
+    
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    
+    const model = tf.sequential();
+    model.add(tf.layers.dense({units: HIDDEN_UNITS, inputShape: [19200], activation: 'relu'}));
+    model.add(tf.layers.dense({units: classes.length, activation: 'softmax'})); 
+    model.compile({optimizer: 'adam', loss: 'categoricalCrossentropy', metrics:['accuracy']});
+    
+    await model.fit(dataset.xs, dataset.ys, {
+        epochs: 50,
+        callbacks: {
+            onEpochEnd: (epoch, logs) => {
+                document.getElementById('trainLog').textContent = `Ep: ${epoch} Acc: ${logs.acc.toFixed(2)}`;
+            }
+        }
+    });
+    
+    trainedModel = model;
+    alert("Training Complete!");
+};
+
+renderClasses();
+
+document.getElementById('btnExport').onclick = () => {
+    if(!trainedModel) return alert("Train first!");
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    
+    const w1 = trainedModel.layers[0].getWeights()[0].dataSync();
+    const b1 = trainedModel.layers[0].getWeights()[1].dataSync();
+    const w2 = trainedModel.layers[1].getWeights()[0].dataSync();
+    const b2 = trainedModel.layers[1].getWeights()[1].dataSync();
+    
+    const fmt = (arr) => "{" + Array.from(arr).map(n => n.toFixed(4)).join(",") + "}";
+    
+    const clsStr = classes.map(c => `"${c.name}"`).join(", ");
+    
+    let c = `void loadModel(TinyModel& model) {\n`;
+    c += `  model.input_dim = 19200; model.hidden_dim = ${HIDDEN_UNITS}; model.output_dim = ${classes.length};\n`;
+    c += `  model.classes = {${clsStr}};\n`;
+    c += `  model.w1 = ${fmt(w1)};\n`;
+    c += `  model.b1 = ${fmt(b1)};\n`;
+    c += `  model.w2 = ${fmt(w2)};\n`;
+    c += `  model.b2 = ${fmt(b2)};\n`;
+    c += `  model.loaded = true;\n`;
+    c += `}\n`;
+    
+    const ta = document.getElementById('modelCode');
+    ta.style.display = 'block';
+    ta.value = c;
+    alert("C++ Code generated in the training panel!");
+};
+
+document.getElementById('btnUploadModel').onclick = async () => {
+    if(!trainedModel) return alert("Train first!");
+    if(!rxChar) return alert("Connect BLE first!");
+    
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    const classNames = classes.map(c => c.name);
+    const configCmd = {
+        "cmd": "CONFIG_MODEL",
+        "classes": classNames,
+        "hid": HIDDEN_UNITS
+    };
+    await sendCommand(configCmd);
+    await new Promise(r => setTimeout(r, 300));
+    
+    const w1 = trainedModel.layers[0].getWeights()[0].dataSync();
+    const b1 = trainedModel.layers[0].getWeights()[1].dataSync();
+    const w2 = trainedModel.layers[1].getWeights()[0].dataSync();
+    const b2 = trainedModel.layers[1].getWeights()[1].dataSync();
+    
+    const compress = (data) => {
+        let min = Infinity, max = -Infinity;
+        for(let n of data) { if(n<min) min=n; if(n>max) max=n; }
+        const scale = Math.max(Math.abs(min), Math.abs(max)) / 127.0;
+        const int8 = new Int8Array(data.length);
+        if (scale === 0) return {data: int8, scale: 1.0};
+        for(let i=0; i<data.length; i++) int8[i] = Math.round(data[i] / scale);
+        return {data: int8, scale: scale};
+    };
+    
+    const c_w1 = compress(w1);
+    const c_b1 = compress(b1);
+    const c_w2 = compress(w2);
+    const c_b2 = compress(b2);
+    
+    const totalSize = 16 + c_w1.data.length + c_b1.data.length + c_w2.data.length + c_b2.data.length;
+    const buffer = new Uint8Array(totalSize);
+    const view = new DataView(buffer.buffer);
+    
+    let off = 0;
+    view.setFloat32(off, c_w1.scale, true); off+=4;
+    view.setFloat32(off, c_b1.scale, true); off+=4;
+    view.setFloat32(off, c_w2.scale, true); off+=4;
+    view.setFloat32(off, c_b2.scale, true); off+=4;
+    
+    buffer.set(new Uint8Array(c_w1.data.buffer), off); off += c_w1.data.length;
+    buffer.set(new Uint8Array(c_b1.data.buffer), off); off += c_b1.data.length;
+    buffer.set(new Uint8Array(c_w2.data.buffer), off); off += c_w2.data.length;
+    buffer.set(new Uint8Array(c_b2.data.buffer), off); off += c_b2.data.length;
+    
+    console.log("Compressed Model size:", totalSize);
+    
+    const enc = new TextEncoder();
+    const cmd = JSON.stringify({cmd: "UL_START", size: totalSize});
+    await rxChar.writeValue(enc.encode(cmd + '\n'));
+    await new Promise(r => setTimeout(r, 200)); 
+    
+    const CHUNK_SIZE = 256; 
+    document.getElementById('trainLog').textContent = "Uploading " + (buffer.length/1024).toFixed(1) + " KB...";
+    
+    for(let i=0; i<buffer.length; i+=CHUNK_SIZE) {
+        const chunk = buffer.slice(i, i+CHUNK_SIZE);
+        await rxChar.writeValue(chunk);
+        if(i % 5000 === 0) await new Promise(r => setTimeout(r, 10));
+    }
+    
+    document.getElementById('trainLog').textContent = "Upload Complete!";
+    alert("Model Uploaded to Robot!");
+};
+</script>
+</body>
+</html>
