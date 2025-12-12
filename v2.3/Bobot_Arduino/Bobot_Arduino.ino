@@ -75,7 +75,7 @@ void setupCamera() {
     config.pin_pwdn = PWDN_GPIO_NUM;
     config.pin_reset = RESET_GPIO_NUM;
     config.xclk_freq_hz = 10000000;
-    config.pixel_format = PIXFORMAT_GRAYSCALE; 
+    config.pixel_format = PIXFORMAT_GRAYSCALE; // Grayscale for faster processing
     config.frame_size = FRAMESIZE_QQVGA; // 160x120 (Native size for model)
     config.jpeg_quality = 12; 
     config.fb_count = 2;
@@ -178,35 +178,95 @@ int argmax(const std::vector<float>& v) {
     return idx;
 }
 
-// Helper math for pointer
-std::vector<float> dense_ptr(const float* in, const std::vector<float>& w, const std::vector<float>& b, int out_dim, bool relu, int in_dim) {
+// v2.3: Optimized dense layer using compressed weights
+std::vector<float> dense_compressed(const float* in, const int8_t* w_compressed, const int8_t* b_compressed, 
+                                     float scale_w, float scale_b, int out_dim, bool relu, int in_dim) {
     std::vector<float> out(out_dim);
     
-    // Check pointers
-    if(in == NULL) { Serial.println("dense_ptr: NULL input"); return out; }
-    if(w.size() == 0) { Serial.println("dense_ptr: Empty weights"); return out; }
+    if(in == NULL || w_compressed == NULL || b_compressed == NULL) {
+        Serial.println("dense_compressed: NULL pointer");
+        return out;
+    }
     
     for (int i = 0; i < out_dim; i++) {
-        float sum = b[i];
+        float sum = b_compressed[i] * scale_b; // Decompress bias
         for (int j = 0; j < in_dim; j++) {
-            sum += in[j] * w[j * out_dim + i];
+            sum += in[j] * (w_compressed[j * out_dim + i] * scale_w); // Decompress weight on-the-fly
         }
         out[i] = (relu && sum < 0) ? 0 : sum;
     }
     return out;
 }
 
+// --- Inference quality improvements ---
+// Softmax confidence + short temporal smoothing reduces flicker for faces/gestures/objects.
+static float g_last_prob = 0.0f;
+static int g_last_cls = -1;
+
+static float softmaxProbForIndex(const std::vector<float>& logits, int idx) {
+    if (idx < 0 || idx >= (int)logits.size()) return 0.0f;
+    float maxv = logits[0];
+    for (size_t i = 1; i < logits.size(); i++) if (logits[i] > maxv) maxv = logits[i];
+    float sum = 0.0f;
+    for (size_t i = 0; i < logits.size(); i++) sum += expf(logits[i] - maxv);
+    if (sum <= 0.0f) return 0.0f;
+    return expf(logits[idx] - maxv) / sum;
+}
+
 String runInference(float* input) {
     if (!model.loaded) return "no_model";
     
-    // L1
-    std::vector<float> h1 = dense_ptr(input, model.w1, model.b1, model.hidden_dim, true, model.input_dim);
+    // v2.3: Use compressed weights with on-the-fly decompression
+    std::vector<float> h1 = dense_compressed(input, model.w1_compressed, model.b1_compressed,
+                                             model.scale_w1, model.scale_b1, 
+                                             model.hidden_dim, true, model.input_dim);
     
-    // L2
-    std::vector<float> out = dense(h1, model.w2, model.b2, model.output_dim, false);
+    float* h1_arr = h1.data();
+    std::vector<float> logits = dense_compressed(h1_arr, model.w2_compressed, model.b2_compressed,
+                                                 model.scale_w2, model.scale_b2,
+                                                 model.output_dim, false, model.hidden_dim);
     
-    int cls = argmax(out);
-    if (cls >= 0 && cls < model.classes.size()) return model.classes[cls];
+    int cls = argmax(logits);
+    float prob = softmaxProbForIndex(logits, cls);
+    g_last_prob = prob;
+    g_last_cls = cls;
+
+    const float CONF_TH = 0.60f;
+    const int WIN = 5;
+    static int hist[WIN] = {-1, -1, -1, -1, -1};
+    static float phist[WIN] = {0, 0, 0, 0, 0};
+    static int pos = 0;
+    static int lastStable = -1;
+
+    if (cls >= 0 && cls < model.output_dim && prob >= CONF_TH) {
+        hist[pos] = cls;
+        phist[pos] = prob;
+        pos = (pos + 1) % WIN;
+    }
+
+    // pick best by count, then by summed confidence
+    int best = -1;
+    int bestCount = 0;
+    float bestScore = 0.0f;
+    for (int c = 0; c < model.output_dim && c < 16; c++) {
+        int cnt = 0;
+        float score = 0.0f;
+        for (int i = 0; i < WIN; i++) {
+            if (hist[i] == c) { cnt++; score += phist[i]; }
+        }
+        if (cnt > bestCount || (cnt == bestCount && score > bestScore)) {
+            best = c; bestCount = cnt; bestScore = score;
+        }
+    }
+
+    int chosen = -1;
+    if (best >= 0 && bestCount >= 2) chosen = best;
+    else if (prob >= CONF_TH) chosen = cls;
+
+    if (chosen >= 0) lastStable = chosen;
+    if (chosen < 0) chosen = lastStable;
+
+    if (chosen >= 0 && chosen < (int)model.classes.size()) return model.classes[chosen];
     return "unknown";
 }
 
@@ -226,9 +286,13 @@ bool parse_model_flag = false;
 std::vector<uint8_t> model_raw_buffer;
 // Buffers
 size_t expected_model_size = 0;
-float* ai_input_buffer = NULL; // Use raw pointer to control PSRAM usage 
+float* ai_input_buffer = NULL; // Use raw pointer to control PSRAM usage
+// Grayscale input - 160x120x1 = 19200 floats
+const int AI_INPUT_SIZE = 160 * 120; 
 
-const size_t MODEL_BYTE_SIZE = 1230000; 
+// v2.3: Color RGB input (160x120x3 = 57600)
+// Model size: ~3.7MB compressed, ~14.7MB uncompressed (requires PSRAM)
+const size_t MODEL_BYTE_SIZE = 3700000; 
 
 // Helper for loading compressed bytes
 void loadModelFromBytes(std::vector<uint8_t>& bytes) {
@@ -243,8 +307,10 @@ void loadModelFromBytes(std::vector<uint8_t>& bytes) {
     memcpy(&s_w2, bytes.data() + idx, 4); idx += 4;
     memcpy(&s_b2, bytes.data() + idx, 4); idx += 4;
     
-    // Resize vectors
-    int in_dim = 160*120; // 19200
+    // Dimensions come from CONFIG_MODEL (web sends in_w/in_h/in_dim).
+    // Default is full frame grayscale 160x120 = 19200.
+    int in_dim = model.input_dim;
+    if (in_dim < 1) in_dim = 160 * 120;
     int hid_dim = model.hidden_dim; 
     if (hid_dim < 1) hid_dim = 32;
     
@@ -268,33 +334,83 @@ void loadModelFromBytes(std::vector<uint8_t>& bytes) {
         return;
     }
     
-    model.w1.resize(in_dim * hid_dim);
-    model.b1.resize(hid_dim);
-    model.w2.resize(hid_dim * out_dim);
-    model.b2.resize(out_dim);
+    // v2.3: Store compressed weights in PSRAM (saves 4x memory)
+    size_t w1_size = in_dim * hid_dim;
+    size_t b1_size = hid_dim;
+    size_t w2_size = hid_dim * out_dim;
+    size_t b2_size = out_dim;
     
-    // Decompress W1
-    int8_t* ptr = (int8_t*)(bytes.data() + idx);
-    for(size_t i=0; i<model.w1.size(); i++) model.w1[i] = (float)(*ptr++) * s_w1;
-    idx += model.w1.size();
+    // Free old weights if any
+    if (model.w1_compressed) free(model.w1_compressed);
+    if (model.b1_compressed) free(model.b1_compressed);
+    if (model.w2_compressed) free(model.w2_compressed);
+    if (model.b2_compressed) free(model.b2_compressed);
     
-    // Decompress B1
-    for(size_t i=0; i<model.b1.size(); i++) model.b1[i] = (float)(*ptr++) * s_b1;
-    idx += model.b1.size();
+    // Allocate in PSRAM if available
+    bool use_psram = psramFound();
+    if (use_psram) {
+        model.w1_compressed = (int8_t*)ps_malloc(w1_size);
+        model.b1_compressed = (int8_t*)ps_malloc(b1_size);
+        model.w2_compressed = (int8_t*)ps_malloc(w2_size);
+        model.b2_compressed = (int8_t*)ps_malloc(b2_size);
+    } else {
+        model.w1_compressed = (int8_t*)malloc(w1_size);
+        model.b1_compressed = (int8_t*)malloc(b1_size);
+        model.w2_compressed = (int8_t*)malloc(w2_size);
+        model.b2_compressed = (int8_t*)malloc(b2_size);
+    }
     
-    // Decompress W2
-    for(size_t i=0; i<model.w2.size(); i++) model.w2[i] = (float)(*ptr++) * s_w2;
-    idx += model.w2.size();
+    if (!model.w1_compressed || !model.b1_compressed || !model.w2_compressed || !model.b2_compressed) {
+        Serial.println("Error: Failed to allocate memory for model!");
+        return;
+    }
     
-    // Decompress B2
-    for(size_t i=0; i<model.b2.size(); i++) model.b2[i] = (float)(*ptr++) * s_b2;
-    idx += model.b2.size();
+    // Copy compressed weights directly (no decompression)
+    // Check bounds before copying
+    if (idx + w1_size + b1_size + w2_size + b2_size > bytes.size()) {
+        Serial.println("Error: Not enough data in buffer for all weights!");
+        // Free allocated memory
+        if (model.w1_compressed) { free(model.w1_compressed); model.w1_compressed = NULL; }
+        if (model.b1_compressed) { free(model.b1_compressed); model.b1_compressed = NULL; }
+        if (model.w2_compressed) { free(model.w2_compressed); model.w2_compressed = NULL; }
+        if (model.b2_compressed) { free(model.b2_compressed); model.b2_compressed = NULL; }
+        return;
+    }
+    
+    // Safe pointer arithmetic with bounds checking
+    const uint8_t* src = bytes.data() + idx;
+    memcpy(model.w1_compressed, src, w1_size);
+    idx += w1_size;
+    src = bytes.data() + idx;
+    
+    memcpy(model.b1_compressed, src, b1_size);
+    idx += b1_size;
+    src = bytes.data() + idx;
+    
+    memcpy(model.w2_compressed, src, w2_size);
+    idx += w2_size;
+    src = bytes.data() + idx;
+    
+    memcpy(model.b2_compressed, src, b2_size);
+    idx += b2_size;
+    
+    // Store scales for decompression during inference
+    model.scale_w1 = s_w1;
+    model.scale_b1 = s_b1;
+    model.scale_w2 = s_w2;
+    model.scale_b2 = s_b2;
+    
+    model.w1_size = w1_size;
+    model.b1_size = b1_size;
+    model.w2_size = w2_size;
+    model.b2_size = b2_size;
     
     model.input_dim = in_dim;
     model.hidden_dim = hid_dim;
     // model.output_dim is already set
     
-    // Classes also set by CONFIG_MODEL
+    Serial.printf("Model loaded: %d KB compressed (saved ~75%% memory)\n", 
+        (w1_size + b1_size + w2_size + b2_size) / 1024);
     
     model.loaded = true;
 }
@@ -304,26 +420,42 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       String rxValue = pCharacteristic->getValue();
       
       if (rxValue.length() > 0) {
-        // 1. Binary Model Upload Mode
+        // 1. Binary Model Upload Mode - process ALL data as binary
+        // CRITICAL: When receiving_model=true, NEVER try to parse as JSON
         if (receiving_model) {
-            for (int i = 0; i < rxValue.length(); i++) {
-                model_raw_buffer.push_back((uint8_t)rxValue[i]);
+            // Optimized: Use memcpy for faster data copy (much faster than push_back loop)
+            size_t oldSize = model_raw_buffer.size();
+            size_t newSize = oldSize + rxValue.length();
+            model_raw_buffer.resize(newSize);
+            memcpy(model_raw_buffer.data() + oldSize, rxValue.c_str(), rxValue.length());
+            
+            // Log first chunk to confirm we're receiving data
+            if (oldSize == 0) {
+                Serial.printf("First chunk received: %d bytes\n", rxValue.length());
             }
-            // Progress logging (every 10KB)
-            if (model_raw_buffer.size() % 10000 < 20) {
-                 Serial.printf("DL: %d / %d\n", model_raw_buffer.size(), expected_model_size);
+            
+            // Progress logging (every 50KB for less overhead)
+            if (model_raw_buffer.size() % 50000 < rxValue.length() || 
+                (oldSize == 0) || 
+                (model_raw_buffer.size() % 10000 < rxValue.length() && model_raw_buffer.size() < 100000)) {
+                 Serial.printf("DL: %d / %d (%.1f%%) - chunk: %d bytes\n", 
+                     model_raw_buffer.size(), expected_model_size,
+                     100.0 * model_raw_buffer.size() / expected_model_size,
+                     rxValue.length());
             }
 
             if (model_raw_buffer.size() >= expected_model_size) {
                 receiving_model = false;
-                Serial.println("Model Downloaded. Scheduling parse...");
+                Serial.printf("Model Downloaded! Size: %d bytes (expected: %d)\n", 
+                    model_raw_buffer.size(), expected_model_size);
+                Serial.println("Scheduling parse...");
                 parse_model_flag = true; // Defer parsing
             }
-            return;
+            return; // CRITICAL: Exit early - don't process as JSON
         }
 
-        // 2. Text/JSON Mode
-        // Accumulate JSON
+        // 2. Text/JSON Mode - only process if NOT in binary mode
+        // Accumulate JSON line by line
         for (int i = 0; i < rxValue.length(); i++) {
             rxString += rxValue[i];
             if (rxValue[i] == '\n') {
@@ -446,22 +578,55 @@ void handleCommand(String json) {
         } else {
             model.hidden_dim = 32; 
         }
+
+        // Optional: smaller input resolution for faster upload and inference
+        if (doc.containsKey("in_w")) model.input_w = doc["in_w"];
+        if (doc.containsKey("in_h")) model.input_h = doc["in_h"];
+        if (doc.containsKey("in_dim")) model.input_dim = doc["in_dim"];
+        if (model.input_w < 1 || model.input_h < 1 || model.input_dim < 1) {
+            model.input_w = 160;
+            model.input_h = 120;
+            model.input_dim = 160 * 120;
+        }
         
         model.output_dim = model.classes.size();
-        Serial.printf("Config: %d classes, Hid: %d\n", model.output_dim, model.hidden_dim);
+        Serial.printf("Config: %d classes, Hid: %d, In: %dx%d (%d)\n",
+                      model.output_dim, model.hidden_dim, model.input_w, model.input_h, model.input_dim);
     }
     else if (strcmp(cmd, "UL_START") == 0) {
+        // Reset any previous upload state
+        if (receiving_model) {
+            Serial.println("UL_START: Resetting previous upload state");
+            receiving_model = false;
+            model_raw_buffer.clear();
+        }
+        
         receiving_model = true;
         model_raw_buffer.clear();
         
         if (doc.containsKey("size")) {
              expected_model_size = doc["size"];
+             Serial.printf("UL_START: Received size = %d bytes (%.1f KB)\n", 
+                 expected_model_size, expected_model_size / 1024.0);
         } else {
-             expected_model_size = 614500; // Fallback for 160x120x32 model
+             expected_model_size = 650000; // Fallback for 160x120x1x32 grayscale model
+             Serial.println("UL_START: No size provided, using fallback");
         }
         
-        model_raw_buffer.reserve(expected_model_size);
-        Serial.printf("Waiting for %d bytes...\n", expected_model_size);
+        // Pre-allocate buffer for faster upload (optimized for speed)
+        model_raw_buffer.clear();
+        model_raw_buffer.reserve(expected_model_size + 2048); // Extra space to avoid reallocations
+        
+        // Send ACK back to web interface (fast, non-blocking)
+        if (pTxCharacteristic && deviceConnected) {
+            String ack = "{\"op\":\"ack\",\"phase\":\"ul_start\",\"ok\":true,\"size\":" + String(expected_model_size) + "}\n";
+            pTxCharacteristic->setValue(ack.c_str());
+            pTxCharacteristic->notify();
+            // No delay - let BLE stack handle it asynchronously
+        }
+        
+        Serial.printf("Ready! Waiting for %d bytes (%.1f KB)...\n", 
+            expected_model_size, expected_model_size / 1024.0);
     }
     // Add simple inference trigger for testing
     else if (strcmp(cmd, "I") == 0) {
@@ -472,20 +637,10 @@ void handleCommand(String json) {
 
 void setup() {
     Serial.begin(115200);
-    Serial.println("Bobot v2.2 Starting...");
+    Serial.println("Bobot v2.3 Starting...");
     
     // I2C Init
     initSensors();
-    
-    if(psramFound()){
-        Serial.printf("PSRAM: %d bytes\n", ESP.getPsramSize());
-        ai_input_buffer = (float*)ps_malloc(19200 * sizeof(float));
-    } else {
-        Serial.println("No PSRAM found! Using Heap.");
-        ai_input_buffer = (float*)malloc(19200 * sizeof(float));
-    }
-    
-    loadModel(model);
 
     // Script is empty by default. User must upload it via Web.
     scriptDoc.clear();
@@ -498,20 +653,20 @@ void setup() {
     // Camera
     setupCamera();
     
-    // Memory Allocation (After camera)
+    // Memory Allocation (After camera) - Grayscale (19200 floats)
     if(psramFound()){
         Serial.printf("PSRAM: %d bytes\n", ESP.getPsramSize());
-        ai_input_buffer = (float*)ps_malloc(19200 * sizeof(float));
+        ai_input_buffer = (float*)ps_malloc(AI_INPUT_SIZE * sizeof(float));
     } else {
         Serial.println("No PSRAM found! Using Heap.");
-        ai_input_buffer = (float*)malloc(19200 * sizeof(float));
+        ai_input_buffer = (float*)malloc(AI_INPUT_SIZE * sizeof(float));
     }
     
     loadModel(model);
 
     // BLE
-    BLEDevice::init("Bobot-v2");
-    BLEDevice::setMTU(517); // Boost speed!
+    BLEDevice::init("Bobot-v2.3");
+    BLEDevice::setMTU(517); // Maximum MTU for speed (517 is max for ESP32)
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new MyServerCallbacks());
     BLEService *pService = pServer->createService(SERVICE_UUID);
@@ -570,14 +725,48 @@ void loop() {
                  int w = fb->width;
                  int h = fb->height;
                  
-                 for(int y=0; y<120; y++) {
-                     for(int x=0; x<160; x++) {
-                         // Native resolution, no subsampling needed if camera is QQVGA
-                         // Just copy and normalize
-                         if (x >= w || y >= h) continue; // Safety
-                         
-                         uint8_t pixel = fb->buf[y * w + x];
-                         ai_input_buffer[y*160 + x] = pixel / 255.0f;
+                 // Input resolution can be smaller than camera (e.g. 80x60) to reduce model size & upload time
+                 int outW = model.input_w > 0 ? model.input_w : 160;
+                 int outH = model.input_h > 0 ? model.input_h : 120;
+                 if (outW < 1) outW = 160;
+                 if (outH < 1) outH = 120;
+                 if (outW > w) outW = w;
+                 if (outH > h) outH = h;
+
+                 // Calculate stride (bytes per row, may be aligned)
+                 size_t stride = fb->len / h;
+                 if (stride < (size_t)w) stride = w;
+                 
+                 // Min/max + mean over sampled grid (matches web preprocessing)
+                 uint8_t min_val = 255, max_val = 0;
+                 float sum = 0.0f;
+                 int count = 0;
+                 for (int yy = 0; yy < outH; yy++) {
+                     int srcY = (yy * h) / outH;
+                     for (int xx = 0; xx < outW; xx++) {
+                         int srcX = (xx * w) / outW;
+                         uint8_t pixel = fb->buf[srcY * stride + srcX];
+                         if (pixel < min_val) min_val = pixel;
+                         if (pixel > max_val) max_val = pixel;
+                         sum += pixel;
+                         count++;
+                     }
+                 }
+                 float range = (float)(max_val - min_val);
+                 if (range < 10.0f) range = 255.0f;
+                 float mean = (count > 0) ? (sum / (float)count) : 0.0f;
+                 
+                 // Fill input buffer (first input_dim values are used by inference)
+                 int idx = 0;
+                 for (int yy = 0; yy < outH; yy++) {
+                     int srcY = (yy * h) / outH;
+                     for (int xx = 0; xx < outW; xx++) {
+                         int srcX = (xx * w) / outW;
+                         uint8_t pixel = fb->buf[srcY * stride + srcX];
+                         float stretched = (pixel - min_val) / range; // 0..1
+                         float normalized = (stretched - (mean / 255.0f - 0.5f)) * 1.2f + 0.5f;
+                         normalized = fmax(0.0f, fmin(1.0f, normalized));
+                         ai_input_buffer[idx++] = normalized;
                      }
                  }
                  
@@ -586,7 +775,7 @@ void loop() {
                  // Debug to Serial
                  static long last_print = 0;
                  if(millis() - last_print > 500) {
-                    Serial.printf("AI: %s | Temp: %.1f\n", result.c_str(), sensors.temp);
+                    Serial.printf("AI: %s (p=%.2f) | Temp: %.1f\n", result.c_str(), g_last_prob, sensors.temp);
                     last_print = millis();
                  }
                  
@@ -596,12 +785,12 @@ void loop() {
                  }
             }
 
-            // B. Stream (Convert GRAYSCALE to JPEG)
+            // B. Stream (Convert RGB565 to JPEG)
             // Only send if connected AND requested
             if (deviceConnected && stream_active) {
                 uint8_t * jpg_buf = NULL;
                 size_t jpg_len = 0;
-                // Quality 30 to reduce size for QVGA
+                // Quality 30 to reduce size for QQVGA
                 bool jpeg_converted = frame2jpg(fb, 30, &jpg_buf, &jpg_len); 
                 
                 if (jpeg_converted) {

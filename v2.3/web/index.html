@@ -1,0 +1,1310 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bobot v2.3 (Training + Recognition)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://unpkg.com/blockly@10.0.0/blockly_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/blocks_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/javascript_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/python_compressed.js"></script>
+  <script src="https://unpkg.com/blockly@10.0.0/msg/ru.js"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier"></script>
+  
+  <style>
+    * { box-sizing: border-box; }
+    body { 
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; 
+      margin: 0; 
+      padding: 0;
+      color: #111; 
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .header {
+      background: #2c3e50;
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .header h2 { margin: 0; font-size: 18px; }
+    .header button {
+      padding: 6px 12px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: rgba(255,255,255,0.2);
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .header button:hover { background: rgba(255,255,255,0.3); }
+    
+    .tabs {
+        display: flex;
+        background: #34495e;
+        padding: 0 16px;
+    }
+    .tab {
+        padding: 10px 20px;
+        color: #ddd;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        font-size: 14px;
+    }
+    .tab.active {
+        color: white;
+        border-bottom: 2px solid #3498db;
+        background: #2c3e50;
+    }
+    
+    .main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+    #blocklyDiv { position: absolute; top:0; left:0; right:350px; bottom:0; visibility: visible; }
+    #pythonDiv { position: absolute; top:0; left:0; right:350px; bottom:0; visibility: hidden; background: #282c34; color: #abb2bf; padding: 0; display:flex; flex-direction:column;}
+    
+    #pythonEditor {
+        flex: 1;
+        width: 100%;
+        background: transparent;
+        color: inherit;
+        border: none;
+        padding: 20px;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 14px;
+        line-height: 1.5;
+        resize: none;
+        outline: none;
+    }
+    
+    .sidebar {
+      width: 350px;
+      background: #f5f5f5;
+      border-left: 1px solid #ddd;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: absolute;
+      right: 0;
+      top: 0;
+      bottom: 0;
+    }
+    .sidebar-content { padding: 12px; overflow-y: auto; flex: 1; }
+    textarea.json-out { width: 100%; height: 100px; font-family: monospace; font-size: 12px; }
+    #cameraPreview { width: 100%; background: #000; border-radius: 4px; margin-bottom: 8px; }
+    
+    .card {
+      background: #fff;
+      border: 1px solid #e6e6e6;
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      margin-bottom: 10px;
+    }
+    .row { display:flex; gap:8px; align-items:center; }
+    .row > * { flex: 1; }
+    .pill {
+      display:inline-flex;
+      align-items:center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #eef2f7;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    .pill.warn { background:#fff7ed; border-color:#fed7aa; color:#9a3412; }
+    .pill.ok { background:#ecfdf5; border-color:#bbf7d0; color:#166534; }
+    .progress {
+      height: 10px;
+      background: #eaecef;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+    }
+    .progress > div {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #3498db, #2ecc71);
+      transition: width 0.15s ease;
+    }
+    .thumbs {
+      display:flex;
+      gap:6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .thumbs img{
+      width: 44px;
+      height: 33px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid #e5e7eb;
+      background: #111;
+    }
+    .mini { font-size: 12px; color:#64748b; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    /* Modern Button Styles */
+    .btn {
+      display: inline-block;
+      font-weight: 500;
+      text-align: center;
+      white-space: nowrap;
+      vertical-align: middle;
+      user-select: none;
+      border: 1px solid transparent;
+      padding: 10px 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      border-radius: 6px;
+      transition: all 0.2s ease-in-out;
+      cursor: pointer;
+      width: 100%;
+      margin-bottom: 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    }
+    .btn:disabled { opacity: 0.65; cursor: not-allowed; }
+    .btn:active { transform: translateY(1px); box-shadow: none; }
+    
+    .btn-primary { color: #fff; background-color: #3498db; border-color: #3498db; }
+    .btn-primary:hover { background-color: #2980b9; border-color: #2980b9; }
+
+    .btn-success { color: #fff; background-color: #2ecc71; border-color: #2ecc71; }
+    .btn-success:hover { background-color: #27ae60; border-color: #27ae60; }
+
+    .btn-danger { color: #fff; background-color: #e74c3c; border-color: #e74c3c; }
+    .btn-danger:hover { background-color: #c0392b; border-color: #c0392b; }
+
+    .btn-secondary { color: #fff; background-color: #95a5a6; border-color: #95a5a6; }
+    .btn-secondary:hover { background-color: #7f8c8d; border-color: #7f8c8d; }
+    
+    .btn-outline-secondary { color: #7f8c8d; border-color: #bdc3c7; background: transparent; border-style: dashed; }
+    .btn-outline-secondary:hover { color: #34495e; border-color: #34495e; background-color: rgba(0,0,0,0.03); }
+
+    .btn-group { display: flex; gap: 8px; margin-bottom: 8px; }
+    .btn-group .btn { margin-bottom: 0; }
+    
+    label { font-weight: 500; font-size: 13px; color: #555; }
+    select { 
+        width: 100%; padding: 8px; border-radius: 4px; border: 1px solid #ddd; 
+        background-color: white; font-size: 13px; margin-top: 4px;
+    }
+
+    hr { border: 0; border-top: 1px solid #eee; margin: 15px 0; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>Bobot v2.3</h2>
+    <button id="btnConnect">Подключиться (BLE)</button>
+    <button id="btnUpload">Загрузить сценарий</button>
+    <span id="status">Отключено</span>
+  </div>
+  
+  <div class="tabs">
+      <div class="tab active" onclick="switchTab('blocks')">Blockly</div>
+      <div class="tab" onclick="switchTab('python')">Python Code</div>
+  </div>
+
+  <div class="main-container">
+    <div id="blocklyDiv"></div>
+    <div id="pythonDiv">
+        <div style="padding:10px; background:#21252b; font-size:12px; color:#888;">
+            Write your logic here.<br>
+            <b>v2.3: Training + Recognition</b><br>
+            Supported AI: <b>if ai.sees("Class"): ...</b><br>
+            Supported Sensors: <b>if sensors.temp > 25: ...</b> (temp, hum, press, light)<br>
+            IMU/Mag: <b>sensors.gyro_x, sensors.mag_z, ...</b><br>
+            Supported Motors: <b>motor.run(L, R)</b>
+        </div>
+        <textarea id="pythonEditor" spellcheck="false">
+# Robot Logic in Python
+
+if ai.sees("Run"):
+    motor.run(60, 60)
+elif ai.sees("Wait"):
+    motor.run(0, 0)
+    
+# Sensor Example:
+# if sensors.temp > 30:
+#     motor.run(0, 0)
+</textarea>
+    </div>
+    
+    <div class="sidebar">
+      <div class="sidebar-content">
+        <h3>Сгенерированный JSON:</h3>
+        <textarea id="code" class="json-out" readonly></textarea>
+        
+        <h3>Камера</h3>
+        <img id="cameraPreview" />
+        <button id="btnStream" class="btn btn-primary">Старт/Стоп Видео</button>
+        <hr>
+        <h3>Обучение</h3>
+        
+        <div class="card">
+          <div class="row" style="margin-bottom:8px;">
+            <div>
+              <label>Вход модели (разрешение):</label>
+              <select id="selInputRes">
+                <option value="160x120">160×120 (Макс. точность / медленная загрузка)</option>
+                <option value="80x60" selected>80×60 (Рекомендуется: баланс)</option>
+                <option value="40x30">40×30 (Очень быстро / ниже точность)</option>
+              </select>
+            </div>
+            <div>
+              <label>Hidden Units:</label>
+              <select id="selHidden">
+                <option value="48">48 (Быстро)</option>
+                <option value="96" selected>96 (Баланс / Рекомендуется)</option>
+                <option value="128">128 (Высокая точность)</option>
+                <option value="192">192 (Максимальная точность)</option>
+              </select>
+            </div>
+          </div>
+          
+          <div class="row" style="margin-bottom:8px;">
+            <div>
+              <label>Burst capture:</label>
+              <div class="row">
+                <input id="burstCount" type="number" min="1" max="200" value="10" style="padding:8px; border:1px solid #ddd; border-radius:4px; font-size:13px;" />
+                <input id="burstInterval" type="number" min="10" max="2000" value="120" style="padding:8px; border:1px solid #ddd; border-radius:4px; font-size:13px;" />
+              </div>
+              <div class="mini">Кадров / интервал (мс). Используйте кнопку Burst рядом с классом.</div>
+            </div>
+            <div>
+              <label>Статус датасета:</label>
+              <div id="datasetSummary" class="mini"></div>
+            </div>
+          </div>
+          
+          <div style="margin-bottom:8px;">
+            <label>Прогресс обучения:</label>
+            <div class="progress"><div id="trainProgressBar"></div></div>
+            <div id="trainProgressText" class="mini"></div>
+          </div>
+          
+          <div style="margin-bottom:8px;">
+            <label>Прогресс загрузки модели:</label>
+            <div class="progress"><div id="uploadProgressBar"></div></div>
+            <div id="uploadProgressText" class="mini mono"></div>
+          </div>
+        </div>
+        
+        <div id="classesContainer"></div>
+        <button id="btnAddClass" class="btn btn-outline-secondary">+ Добавить класс</button>
+        
+        <div class="btn-group">
+            <button id="btnReset" class="btn btn-danger">Сброс данных</button>
+            <button id="btnTrain" class="btn btn-primary">Обучить модель</button>
+        </div>
+
+        <div class="card">
+          <div class="row" style="margin-bottom:8px;">
+            <button id="btnLiveTest" class="btn btn-secondary" style="margin:0;">Live Test (в браузере)</button>
+            <span id="liveTestStatus" class="pill">idle</span>
+          </div>
+          <div id="liveTestResult" style="font-weight:600; margin-bottom:6px;">—</div>
+          <div id="liveTestBars" class="mini"></div>
+        </div>
+
+        <button id="btnUploadModel" class="btn btn-success" style="padding: 12px; font-weight: bold; font-size: 15px; margin-top: 10px;">Загрузить на робота</button>
+        
+        <div id="trainLog" style="font-size:12px; color:#27ae60; margin:10px 0; font-weight:bold; min-height:18px; text-align:center;"></div>
+        
+        <button id="btnExport" class="btn btn-secondary" style="font-size:12px; padding:6px; margin-top:20px; opacity:0.7">Экспорт кода C++ (Вручную)</button>
+        <textarea id="modelCode" style="width:100%; height:100px; margin-top:5px; font-size:10px; display:none; border:1px solid #ddd; padding:5px" readonly placeholder="C++ code will appear here..."></textarea>
+      </div>
+    </div>
+  </div>
+
+<script>
+// --- Mode Switching ---
+let currentMode = 'blocks';
+
+function switchTab(mode) {
+    currentMode = mode;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    
+    if (mode === 'blocks') {
+        document.getElementById('blocklyDiv').style.visibility = 'visible';
+        document.getElementById('pythonDiv').style.visibility = 'hidden';
+        // Regenerate JSON from blocks
+        document.getElementById('code').value = generateJSON();
+    } else {
+        document.getElementById('blocklyDiv').style.visibility = 'hidden';
+        document.getElementById('pythonDiv').style.visibility = 'visible';
+        
+        // Generate Python code from Blocks
+        const pyCode = generatePythonFromWorkspace();
+        // Only update if not empty (or maybe always? blocks usually truth)
+        if (pyCode) {
+            document.getElementById('pythonEditor').value = pyCode;
+        }
+        
+        updatePythonJSON();
+    }
+}
+
+document.getElementById('pythonEditor').addEventListener('input', updatePythonJSON);
+
+function updatePythonJSON() {
+    if (currentMode === 'python') {
+        try {
+            const py = document.getElementById('pythonEditor').value;
+            const json = parsePythonToJSON(py);
+            document.getElementById('code').value = json;
+        } catch(e) {
+            document.getElementById('code').value = "Error parsing Python: " + e.message;
+        }
+    }
+}
+
+// --- Enhanced Python Parser ---
+function parsePythonToJSON(text) {
+    const lines = text.split('\n');
+    let rules = [];
+    let currentRule = null;
+    
+    for(let line of lines) {
+        line = line.trim();
+        if (!line || line.startsWith('#')) continue;
+        
+        // 1. Match AI condition: if ai.sees("Label"):
+        const matchAi = line.match(/^(if|elif)\s+ai\.sees\s*\(\s*["'](.+?)["']\s*\)\s*:/);
+        if (matchAi) {
+            const label = matchAi[2];
+            currentRule = { "if": label, "do": {} }; // Legacy string format for AI
+            rules.push(currentRule);
+            continue;
+        }
+        
+        // 2. Match Sensor condition: if sensors.temp > 25:
+        // Format: if sensors.(name) (op) (val):
+        const matchSensor = line.match(/^(if|elif)\s+sensors\.(\w+)\s*([><=!]+)\s*(-?\d+(\.\d+)?)\s*:/);
+        if (matchSensor) {
+            const sensor = matchSensor[2];
+            const op = matchSensor[3];
+            const val = parseFloat(matchSensor[4]);
+            
+            // Map python op to json op
+            let jsonOp = "eq";
+            if (op === '>') jsonOp = "gt";
+            if (op === '<') jsonOp = "lt";
+            if (op === '>=') jsonOp = "gte";
+            if (op === '<=') jsonOp = "lte";
+            if (op === '==') jsonOp = "eq";
+            
+            currentRule = { 
+                "if": { "type": "sensor", "sensor": sensor, "op": jsonOp, "val": val },
+                "do": {} 
+            };
+            rules.push(currentRule);
+            continue;
+        }
+        
+        // Match action (inside a rule)
+        if (currentRule) {
+            const matchMotor = line.match(/motor\.run\s*\(\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/);
+            if (matchMotor) {
+                currentRule.do = {
+                    "cmd": "M",
+                    "l": parseInt(matchMotor[1]),
+                    "r": parseInt(matchMotor[2])
+                };
+            }
+            const matchSleep = line.match(/(?:^|\s)(?:time\.)?sleep\s*\(\s*([0-9]+(?:\.[0-9]+)?)\s*\)/);
+            if (matchSleep) {
+                const sec = parseFloat(matchSleep[1]);
+                currentRule.do = {
+                    "cmd": "T",
+                    "ms": Math.round(sec * 1000)
+                };
+            }
+        }
+    }
+    
+    return JSON.stringify({
+        "cmd": "SCRIPT",
+        "rules": rules
+    });
+}
+
+// --- BLE Configuration ---
+const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+const CHAR_STREAM_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e";
+
+let device, server, service, rxChar, txChar, streamChar;
+let streamActive = false;
+
+async function sendCommand(obj) {
+    if (!rxChar) return alert("Not connected");
+    const str = JSON.stringify(obj);
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(str + "\n"));
+}
+
+// --- Blockly Setup ---
+let workspace = Blockly.inject('blocklyDiv', {
+    toolbox: {
+        "kind": "categoryToolbox",
+        "contents": [
+            {
+                "kind": "category",
+                "name": "Основные",
+                "colour": "%{BKY_LOOPS_HUE}",
+                "contents": [
+                    {"kind": "block", "type": "controls_if"},
+                    {"kind": "block", "type": "controls_repeat_ext"},
+                    {"kind": "block", "type": "controls_whileUntil"},
+                    {"kind": "block", "type": "controls_for"},
+                    {"kind": "block", "type": "controls_flow_statements"},
+                    {"kind": "block", "type": "logic_compare"},
+                    {"kind": "block", "type": "logic_operation"},
+                    {"kind": "block", "type": "logic_boolean"},
+                    {"kind": "block", "type": "math_number"},
+                    {"kind": "block", "type": "text"},
+                    {"kind": "block", "type": "variables_get"},
+                    {"kind": "block", "type": "variables_set"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "AI",
+                "colour": "210",
+                "contents": [
+                    {"kind": "block", "type": "ai_rule"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Sensors",
+                "colour": "180",
+                "contents": [
+                    {"kind": "block", "type": "sensor_rule"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Robot",
+                "colour": "120",
+                "contents": [
+                    {"kind": "block", "type": "motor_run"}
+                ]
+            },
+            {
+                "kind": "category",
+                "name": "Time",
+                "colour": "#5C5CA6",
+                "contents": [
+                    {"kind": "block", "type": "time_sleep"}
+                ]
+            }
+        ]
+    }
+});
+
+// Define Custom Blocks
+Blockly.Blocks['ai_rule'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("If AI sees")
+        .appendField(new Blockly.FieldTextInput("Run"), "CLASS");
+    this.appendStatementInput("DO")
+        .setCheck(null)
+        .appendField("Do");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(210);
+  }
+};
+
+Blockly.Blocks['sensor_rule'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("If Sensor")
+        .appendField(new Blockly.FieldDropdown([
+            ["Temperature", "temp"],
+            ["Humidity", "hum"],
+            ["Pressure", "press"],
+            ["Light", "light"],
+            ["Gyro X", "gyro_x"],
+            ["Gyro Y", "gyro_y"],
+            ["Gyro Z", "gyro_z"],
+            ["Mag X", "mag_x"],
+            ["Mag Y", "mag_y"],
+            ["Mag Z", "mag_z"]
+        ]), "SENSOR")
+        .appendField(new Blockly.FieldDropdown([
+            [">", "gt"],
+            ["<", "lt"],
+            ["=", "eq"]
+        ]), "OP")
+        .appendField(new Blockly.FieldNumber(25), "VAL");
+    this.appendStatementInput("DO")
+        .setCheck(null)
+        .appendField("Do");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(180);
+  }
+};
+
+Blockly.Blocks['motor_run'] = {
+  init: function() {
+    this.appendDummyInput()
+        .appendField("Motor L")
+        .appendField(new Blockly.FieldNumber(60, -100, 100), "L")
+        .appendField("R")
+        .appendField(new Blockly.FieldNumber(60, -100, 100), "R");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(230);
+  }
+};
+
+// Custom Python generator
+// Ensure generators are defined before use
+if (!Blockly.Python) Blockly.Python = new Blockly.Generator('Python');
+
+Blockly.Python['ai_rule'] = function(block) {
+  var cls = block.getFieldValue('CLASS');
+  var statements_do = Blockly.Python.statementToCode(block, 'DO');
+  return `if ai.sees("${cls}"):\n${statements_do || '    pass\n'}`;
+};
+
+Blockly.Python['sensor_rule'] = function(block) {
+  var sensor = block.getFieldValue('SENSOR');
+  var op = block.getFieldValue('OP');
+  var val = block.getFieldValue('VAL');
+  var statements_do = Blockly.Python.statementToCode(block, 'DO');
+  
+  // Map op
+  let pyOp = '==';
+  if (op === 'gt') pyOp = '>';
+  if (op === 'lt') pyOp = '<';
+  if (op === 'eq') pyOp = '=='; // Should use approx check for floats but simple for now
+  
+  return `if sensors.${sensor} ${pyOp} ${val}:\n${statements_do || '    pass\n'}`;
+};
+
+Blockly.Python['motor_run'] = function(block) {
+  var l = block.getFieldValue('L');
+  var r = block.getFieldValue('R');
+  return `motor.run(${l}, ${r})\n`;
+};
+
+Blockly.Python['time_sleep'] = function(block) {
+  var duration = Blockly.Python.valueToCode(block, 'DURATION', Blockly.Python.ORDER_ATOMIC) || '0';
+  var unit = block.getFieldValue('UNIT');
+  // Simple approximation if value is number, otherwise complex expression
+  // Since we don't have full python env, let's keep it simple
+  if (unit === 'ms') {
+      return `time.sleep(${duration}/1000.0)\n`;
+  }
+  return `time.sleep(${duration})\n`;
+};
+
+function generatePythonFromWorkspace() {
+    return Blockly.Python.workspaceToCode(workspace);
+}
+
+// JSON Generator
+Blockly.JavaScript['ai_rule'] = function(block) {
+  var cls = block.getFieldValue('CLASS');
+  var statements_do = Blockly.JavaScript.statementToCode(block, 'DO');
+  if (statements_do.endsWith(',')) statements_do = statements_do.slice(0, -1);
+  return `{"if":"${cls}", "do":${statements_do}},`;
+};
+
+Blockly.JavaScript['sensor_rule'] = function(block) {
+  var sensor = block.getFieldValue('SENSOR');
+  var op = block.getFieldValue('OP');
+  var val = block.getFieldValue('VAL');
+  var statements_do = Blockly.JavaScript.statementToCode(block, 'DO');
+  if (statements_do.endsWith(',')) statements_do = statements_do.slice(0, -1);
+  
+  return `{"if":{"type":"sensor","sensor":"${sensor}","op":"${op}","val":${val}}, "do":${statements_do}},`;
+};
+
+Blockly.JavaScript['motor_run'] = function(block) {
+  var l = block.getFieldValue('L');
+  var r = block.getFieldValue('R');
+  return `{"cmd":"M","l":${l},"r":${r}},`;
+};
+
+// Time block
+Blockly.Blocks['time_sleep'] = {
+  init: function() {
+    this.appendValueInput("DURATION")
+        .setCheck("Number")
+        .appendField("Ждать");
+    this.appendDummyInput()
+        .appendField(new Blockly.FieldDropdown([["секунд", "s"], ["миллисекунд", "ms"]]), "UNIT");
+    this.setPreviousStatement(true, null);
+    this.setNextStatement(true, null);
+    this.setColour(230);
+    this.setTooltip("Ожидает указанное время");
+  }
+};
+
+Blockly.JavaScript['time_sleep'] = function(block) {
+  const duration = Blockly.JavaScript.valueToCode(block, 'DURATION', Blockly.JavaScript.ORDER_ATOMIC) || '0';
+  const unit = block.getFieldValue('UNIT');
+  const ms = unit === 's' ? `(${duration})*1000` : `(${duration})`;
+  return `{"cmd":"T","ms":${ms}},`;
+};
+
+function generateJSON() {
+    if (currentMode === 'python') return document.getElementById('code').value;
+    
+    let code = Blockly.JavaScript.workspaceToCode(workspace);
+    if (code.endsWith(',')) code = code.slice(0, -1);
+    return `{"cmd":"SCRIPT", "rules":[${code}]}`;
+}
+
+function loadDefaultWorkspace() {
+    // Create blocks directly via API to avoid XML issues
+    const r1 = workspace.newBlock('ai_rule');
+    r1.setFieldValue('Run', 'CLASS');
+    r1.initSvg(); r1.render();
+    r1.moveBy(20, 20);
+    
+    const m1 = workspace.newBlock('motor_run');
+    m1.setFieldValue(60, 'L'); m1.setFieldValue(60, 'R');
+    m1.initSvg(); m1.render();
+    r1.getInput('DO').connection.connect(m1.previousConnection);
+    
+    const r2 = workspace.newBlock('ai_rule');
+    r2.setFieldValue('Wait', 'CLASS');
+    r2.initSvg(); r2.render();
+    r1.nextConnection.connect(r2.previousConnection);
+    
+    const m2 = workspace.newBlock('motor_run');
+    m2.setFieldValue(0, 'L'); m2.setFieldValue(0, 'R');
+    m2.initSvg(); m2.render();
+    r2.getInput('DO').connection.connect(m2.previousConnection);
+}
+
+loadDefaultWorkspace();
+
+workspace.addChangeListener((event) => {
+    // Only update on meaningful events (not just UI clicks)
+    if (event.type === Blockly.Events.BLOCK_CHANGE || 
+        event.type === Blockly.Events.BLOCK_MOVE || 
+        event.type === Blockly.Events.BLOCK_DELETE ||
+        event.type === Blockly.Events.BLOCK_CREATE) {
+            
+        if (currentMode === 'blocks') {
+            document.getElementById('code').value = generateJSON();
+        }
+    }
+});
+
+// --- BLE Logic ---
+document.getElementById('btnConnect').onclick = async () => {
+    try {
+        device = await navigator.bluetooth.requestDevice({
+            filters: [{namePrefix: 'Bobot'}],
+            optionalServices: [SERVICE_UUID]
+        });
+        server = await device.gatt.connect();
+        service = await server.getPrimaryService(SERVICE_UUID);
+        rxChar = await service.getCharacteristic(CHAR_RX_UUID);
+        
+        // Setup TX characteristic for receiving ACKs
+        txChar = await service.getCharacteristic(CHAR_TX_UUID);
+        await txChar.startNotifications();
+        txChar.addEventListener('characteristicvaluechanged', onTxNotify);
+        
+        try {
+            streamChar = await service.getCharacteristic(CHAR_STREAM_UUID);
+            await streamChar.startNotifications();
+            streamChar.addEventListener('characteristicvaluechanged', onStreamData);
+        } catch(e) { console.log("No stream char"); }
+
+        document.getElementById('status').textContent = "Connected";
+    } catch(e) {
+        alert(e);
+    }
+};
+
+document.getElementById('btnUpload').onclick = async () => {
+    if (!rxChar) return alert("Not connected");
+    if (currentMode === 'python') updatePythonJSON();
+    
+    const json = document.getElementById('code').value;
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(json + "\n"));
+    alert("Script uploaded!");
+};
+
+document.getElementById('btnStream').onclick = async () => {
+    if (!rxChar) return alert("Not connected");
+    streamActive = !streamActive;
+    const cmd = JSON.stringify({cmd: "S", val: streamActive ? 1 : 0});
+    const enc = new TextEncoder();
+    await rxChar.writeValue(enc.encode(cmd + "\n"));
+};
+
+let imageBuffer = [];
+const SOI = new Uint8Array([0xFF, 0xD8]);
+const EOI = new Uint8Array([0xFF, 0xD9]);
+
+function onStreamData(event) {
+    const val = new Uint8Array(event.target.value.buffer);
+    val.forEach(b => imageBuffer.push(b));
+    if (val.length > 1 && val[val.length-1] === 0xD9 && val[val.length-2] === 0xFF) {
+        const blob = new Blob([new Uint8Array(imageBuffer)], {type: 'image/jpeg'});
+        const url = URL.createObjectURL(blob);
+        document.getElementById('cameraPreview').src = url;
+        imageBuffer = [];
+    } else if (imageBuffer.length > 40000) {
+        imageBuffer = [];
+    }
+}
+
+// Handle TX notifications (ACKs from robot)
+function onTxNotify(event) {
+    const decoder = new TextDecoder();
+    const val = event.target.value;
+    const text = decoder.decode(val);
+    
+    text.split('\n').filter(Boolean).forEach(line => {
+        try {
+            const msg = JSON.parse(line);
+            if (msg.op === 'ack' && msg.phase === 'ul_start') {
+                console.log('Robot ready for upload:', msg);
+                if (msg.ok) {
+                    document.getElementById('trainLog').textContent = `Robot ready, size: ${msg.size} bytes`;
+                }
+            }
+        } catch(e) {
+            // Not JSON, ignore
+        }
+    });
+}
+
+// --- Training Logic ---
+let trainedModel = null;
+let dataset = { xs: null, ys: null };
+let classes = [
+    {name: "Run", count: 0},
+    {name: "Wait", count: 0}
+];
+
+let classThumbs = {}; // idx -> array of dataURLs
+let liveTestTimer = null;
+
+function getInputSpec() {
+    const v = document.getElementById('selInputRes')?.value || "80x60";
+    const [wStr, hStr] = v.split('x');
+    const w = parseInt(wStr, 10);
+    const h = parseInt(hStr, 10);
+    return { w, h, dim: w * h, label: `${w}×${h}` };
+}
+
+function renderDatasetSummary() {
+    const el = document.getElementById('datasetSummary');
+    if (!el) return;
+    const counts = classes.map(c => c.count);
+    const total = counts.reduce((a,b)=>a+b,0);
+    const min = Math.min(...counts);
+    const max = Math.max(...counts);
+    const imbalance = max > 0 ? Math.round((min / max) * 100) : 0;
+    const rec = max === 0 ? "Соберите примеры" : (imbalance < 60 ? "Дисбаланс: добавьте в слабые классы" : "Баланс ок");
+    const pillClass = max === 0 ? "pill warn" : (imbalance < 60 ? "pill warn" : "pill ok");
+    el.innerHTML = `
+      <div class="row" style="align-items:flex-start;">
+        <div><span class="${pillClass}">${rec}</span></div>
+        <div class="mini">Всего: <b>${total}</b> | min/max: <b>${min}/${max}</b> (${imbalance}%)</div>
+      </div>
+    `;
+}
+
+function renderClasses() {
+    const container = document.getElementById('classesContainer');
+    container.innerHTML = '';
+    classes.forEach((cls, idx) => {
+        if (!classThumbs[idx]) classThumbs[idx] = [];
+        const div = document.createElement('div');
+        div.style.marginBottom = '8px';
+        div.innerHTML = `
+            <div style="display:flex; align-items:center; gap:5px;">
+                <input type="text" value="${cls.name}" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:4px; font-size:13px" onchange="updateClassName(${idx}, this.value)">
+                <span id="cnt${idx}" style="font-size:12px; font-weight:bold; min-width:25px; text-align:center; background:#eee; padding:4px; border-radius:4px">${cls.count}</span>
+                <button class="btn btn-primary" style="width:auto; margin:0; padding:6px 10px; font-size:16px; line-height:1" onclick="addSample(${idx})" title="Сделать снимок">📷</button> 
+                <button class="btn btn-secondary" style="width:auto; margin:0; padding:6px 10px; font-size:12px; line-height:1" onclick="burstSample(${idx})" title="Burst capture">Burst</button>
+                ${idx > 1 ? `<button class="btn btn-danger" style="width:auto; margin:0; padding:6px 10px; font-size:16px; line-height:1" onclick="removeClass(${idx})" title="Удалить класс">×</button>` : ''}
+            </div>
+            <div class="thumbs" id="thumbs${idx}"></div>
+        `;
+        container.appendChild(div);
+        
+        const thumbsEl = div.querySelector(`#thumbs${idx}`);
+        const thumbs = classThumbs[idx] || [];
+        thumbsEl.innerHTML = thumbs.map(u => `<img src="${u}" />`).join("");
+    });
+    renderDatasetSummary();
+}
+
+function updateClassName(idx, val) { classes[idx].name = val; }
+
+function removeClass(idx) {
+    if(dataset.xs) {
+        alert("Resetting dataset because class structure changed");
+        document.getElementById('btnReset').click();
+    }
+    classes.splice(idx, 1);
+    renderClasses();
+}
+
+document.getElementById('btnAddClass').onclick = () => {
+    classes.push({name: "Class " + (classes.length+1), count: 0});
+    renderClasses();
+};
+
+async function addSample(idx) {
+    const img = document.getElementById('cameraPreview');
+    if(!img.src) return;
+    
+    // Save thumbnail (UI)
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 88;
+        canvas.height = 66;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const url = canvas.toDataURL('image/jpeg', 0.7);
+        if (!classThumbs[idx]) classThumbs[idx] = [];
+        classThumbs[idx].unshift(url);
+        classThumbs[idx] = classThumbs[idx].slice(0, 8);
+    } catch(e) {}
+    
+    const spec = getInputSpec();
+    const t = tf.tidy(() => {
+        const raw = tf.browser.fromPixels(img);
+        const resized = tf.image.resizeBilinear(raw, [spec.h, spec.w], false);
+        const gray = resized.mean(2); // 0..255
+        const minVal = gray.min();
+        const maxVal = gray.max();
+        const range = maxVal.sub(minVal).add(1e-7);
+        const stretched = gray.sub(minVal).div(range); // 0..1
+        const meanNorm = gray.mean().div(255.0); // 0..1
+        const normalized = stretched.sub(meanNorm.sub(0.5)).mul(1.2).add(0.5).clipByValue(0, 1);
+        return normalized.reshape([1, spec.dim]);
+    });
+    
+    const y = tf.tidy(() => tf.oneHot(idx, classes.length).reshape([1, classes.length]));
+    
+    if(dataset.xs == null) {
+        dataset.xs = t;
+        dataset.ys = y;
+    } else {
+        if (dataset.ys.shape[1] !== classes.length) {
+            alert("Class count changed! Resetting data.");
+            document.getElementById('btnReset').click();
+            return;
+        }
+        
+        const oldX = dataset.xs;
+        const oldY = dataset.ys;
+        dataset.xs = oldX.concat(t, 0);
+        dataset.ys = oldY.concat(y, 0);
+        oldX.dispose(); oldY.dispose();
+        t.dispose(); y.dispose();
+    }
+    
+    classes[idx].count++;
+    renderClasses(); 
+}
+
+async function burstSample(idx) {
+    const n = parseInt(document.getElementById('burstCount').value || '10', 10);
+    const ms = parseInt(document.getElementById('burstInterval').value || '120', 10);
+    if (!Number.isFinite(n) || n < 1) return;
+    document.getElementById('trainLog').textContent = `Burst: ${classes[idx].name} × ${n}`;
+    for (let i = 0; i < n; i++) {
+        await addSample(idx);
+        await new Promise(r => setTimeout(r, ms));
+    }
+    document.getElementById('trainLog').textContent = `Burst done: ${classes[idx].name}`;
+}
+
+document.getElementById('btnReset').onclick = () => {
+    if(dataset.xs) {
+        dataset.xs.dispose();
+        dataset.ys.dispose();
+        dataset.xs = null;
+        dataset.ys = null;
+    }
+    classes.forEach(c => c.count = 0);
+    renderClasses();
+};
+
+document.getElementById('btnTrain').onclick = async () => {
+    if(!dataset.xs) return alert("No data!");
+    document.getElementById('trainLog').textContent = "Training...";
+    document.getElementById('trainProgressBar').style.width = "0%";
+    document.getElementById('trainProgressText').textContent = "";
+    
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    const spec = getInputSpec();
+    
+    const model = tf.sequential();
+    // Grayscale input (configurable)
+    // Single hidden layer with better initialization for improved accuracy
+    model.add(tf.layers.dense({
+        units: HIDDEN_UNITS, 
+        inputShape: [spec.dim], 
+        activation: 'relu',
+        kernelInitializer: 'heNormal', // Better initialization for ReLU
+        biasInitializer: 'zeros'
+    }));
+    // Output layer
+    model.add(tf.layers.dense({
+        units: classes.length, 
+        activation: 'softmax',
+        kernelInitializer: 'glorotUniform'
+    })); 
+    // Use adaptive learning rate with decay for better convergence
+    model.compile({
+        optimizer: tf.train.adam(0.0008), // Optimized learning rate
+        loss: 'categoricalCrossentropy', 
+        metrics:['accuracy']
+    });
+    
+    const epochs = 200;
+    await model.fit(dataset.xs, dataset.ys, {
+        epochs,
+        batchSize: 16,
+        shuffle: true,
+        validationSplit: 0.2,
+        callbacks: [
+          tf.callbacks.earlyStopping({ monitor: 'val_loss', patience: 12 }),
+          {
+            onEpochEnd: (epoch, logs) => {
+                const p = Math.max(1, Math.round(((epoch + 1) / epochs) * 100));
+                document.getElementById('trainProgressBar').style.width = `${p}%`;
+                const acc = (logs.acc ?? logs.accuracy ?? 0);
+                const valAcc = (logs.val_acc ?? logs.val_accuracy ?? 0);
+                document.getElementById('trainProgressText').textContent = `Ep ${epoch+1}/${epochs} | acc=${acc.toFixed(3)} | val_acc=${valAcc.toFixed(3)} | loss=${(logs.loss ?? 0).toFixed(3)}`;
+                document.getElementById('trainLog').textContent = `Training... ${p}%`;
+            }
+          }
+        ]
+    });
+    
+    trainedModel = model;
+    alert("Training Complete!");
+};
+
+renderClasses();
+
+document.getElementById('btnExport').onclick = () => {
+    if(!trainedModel) return alert("Train first!");
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    const spec = getInputSpec();
+    
+    const w1 = trainedModel.layers[0].getWeights()[0].dataSync();
+    const b1 = trainedModel.layers[0].getWeights()[1].dataSync();
+    const w2 = trainedModel.layers[1].getWeights()[0].dataSync();
+    const b2 = trainedModel.layers[1].getWeights()[1].dataSync();
+    
+    const fmt = (arr) => "{" + Array.from(arr).map(n => n.toFixed(4)).join(",") + "}";
+    
+    const clsStr = classes.map(c => `"${c.name}"`).join(", ");
+    
+    let c = `void loadModel(TinyModel& model) {\n`;
+    c += `  model.input_dim = ${spec.dim}; model.hidden_dim = ${HIDDEN_UNITS}; model.output_dim = ${classes.length};\n`;
+    c += `  model.classes = {${clsStr}};\n`;
+    c += `  model.w1 = ${fmt(w1)};\n`;
+    c += `  model.b1 = ${fmt(b1)};\n`;
+    c += `  model.w2 = ${fmt(w2)};\n`;
+    c += `  model.b2 = ${fmt(b2)};\n`;
+    c += `  model.loaded = true;\n`;
+    c += `}\n`;
+    
+    const ta = document.getElementById('modelCode');
+    ta.style.display = 'block';
+    ta.value = c;
+    alert("C++ Code generated in the training panel!");
+};
+
+document.getElementById('btnUploadModel').onclick = async () => {
+    if(!trainedModel) return alert("Train first!");
+    if(!rxChar) return alert("Connect BLE first!");
+    
+    const HIDDEN_UNITS = parseInt(document.getElementById('selHidden').value);
+    const spec = getInputSpec();
+    const classNames = classes.map(c => c.name);
+    const configCmd = {
+        "cmd": "CONFIG_MODEL",
+        "classes": classNames,
+        "hid": HIDDEN_UNITS,
+        "in_w": spec.w,
+        "in_h": spec.h,
+        "in_dim": spec.dim
+    };
+    await sendCommand(configCmd);
+    await new Promise(r => setTimeout(r, 300));
+    
+    const w1 = trainedModel.layers[0].getWeights()[0].dataSync();
+    const b1 = trainedModel.layers[0].getWeights()[1].dataSync();
+    const w2 = trainedModel.layers[1].getWeights()[0].dataSync();
+    const b2 = trainedModel.layers[1].getWeights()[1].dataSync();
+    
+    const compress = (data) => {
+        let min = Infinity, max = -Infinity;
+        for(let n of data) { if(n<min) min=n; if(n>max) max=n; }
+        const scale = Math.max(Math.abs(min), Math.abs(max)) / 127.0;
+        const int8 = new Int8Array(data.length);
+        if (scale === 0) return {data: int8, scale: 1.0};
+        for(let i=0; i<data.length; i++) int8[i] = Math.round(data[i] / scale);
+        return {data: int8, scale: scale};
+    };
+    
+    const c_w1 = compress(w1);
+    const c_b1 = compress(b1);
+    const c_w2 = compress(w2);
+    const c_b2 = compress(b2);
+    
+    const totalSize = 16 + c_w1.data.length + c_b1.data.length + c_w2.data.length + c_b2.data.length;
+    console.log("Model components:", {
+        header: 16,
+        w1: c_w1.data.length,
+        b1: c_b1.data.length,
+        w2: c_w2.data.length,
+        b2: c_b2.data.length,
+        total: totalSize
+    });
+    
+    const buffer = new Uint8Array(totalSize);
+    const view = new DataView(buffer.buffer);
+    
+    let off = 0;
+    view.setFloat32(off, c_w1.scale, true); off+=4;
+    view.setFloat32(off, c_b1.scale, true); off+=4;
+    view.setFloat32(off, c_w2.scale, true); off+=4;
+    view.setFloat32(off, c_b2.scale, true); off+=4;
+    
+    buffer.set(new Uint8Array(c_w1.data.buffer), off); off += c_w1.data.length;
+    buffer.set(new Uint8Array(c_b1.data.buffer), off); off += c_b1.data.length;
+    buffer.set(new Uint8Array(c_w2.data.buffer), off); off += c_w2.data.length;
+    buffer.set(new Uint8Array(c_b2.data.buffer), off); off += c_b2.data.length;
+    
+    // Verify buffer size matches
+    if (off !== totalSize) {
+        console.error(`Size mismatch! Expected ${totalSize}, got ${off}`);
+        alert(`Error: Buffer size mismatch (${off} vs ${totalSize})`);
+        return;
+    }
+    
+    console.log("Compressed Model size:", totalSize, "bytes (", (totalSize/1024).toFixed(1), "KB)");
+    
+    const enc = new TextEncoder();
+    const cmd = JSON.stringify({cmd: "UL_START", size: totalSize});
+    console.log("Sending UL_START command:", cmd);
+    console.log("Expected size:", totalSize, "bytes");
+    
+    // Send command using regular write (needs ACK for command)
+    try {
+        await rxChar.writeValue(enc.encode(cmd + '\n'));
+        console.log("UL_START command sent successfully");
+    } catch(e) {
+        console.error("Failed to send UL_START:", e);
+        alert("Failed to send upload command: " + e);
+        return;
+    }
+    
+    // Wait for ACK from robot (with timeout)
+    let ackReceived = false;
+    const ackHandler = (event) => {
+        const decoder = new TextDecoder();
+        const text = decoder.decode(event.target.value);
+        console.log("Received from robot:", text);
+        if (text.includes('"phase":"ul_start"')) {
+            ackReceived = true;
+            console.log("ACK received from robot!");
+        }
+    };
+    
+    if (txChar) {
+        txChar.addEventListener('characteristicvaluechanged', ackHandler);
+        
+        // Wait up to 1 second for ACK (reduced timeout for faster start)
+        for (let i = 0; i < 10 && !ackReceived; i++) {
+            await new Promise(r => setTimeout(r, 100));
+        }
+        txChar.removeEventListener('characteristicvaluechanged', ackHandler);
+    }
+    
+    if (!ackReceived) {
+        console.warn("No ACK received from robot, proceeding anyway...");
+        document.getElementById('trainLog').textContent = "Warning: No ACK, proceeding...";
+    } else {
+        document.getElementById('trainLog').textContent = "Robot ready, starting upload...";
+    }
+    
+    // Minimal delay before starting upload
+    await new Promise(r => setTimeout(r, 20));
+    
+    // Optimized: Balanced approach - speed with reliability
+    // Use smaller chunks with writeValue (ACK) for reliability, but optimized
+    const CHUNK_SIZE = 256; // Smaller chunks for better reliability
+    const BATCH_SIZE = 10; // Update progress every 10 chunks
+    const totalKB = (buffer.length/1024).toFixed(1);
+    console.log(`Starting optimized binary upload: ${buffer.length} bytes (${totalKB} KB) in chunks of ${CHUNK_SIZE}`);
+    document.getElementById('trainLog').textContent = `Uploading ${totalKB} KB...`;
+    document.getElementById('uploadProgressBar').style.width = "0%";
+    document.getElementById('uploadProgressText').textContent = "";
+    
+    let uploaded = 0;
+    let chunkCount = 0;
+    let errorCount = 0;
+    const startTime = Date.now();
+    
+    // Use writeValue with ACK for reliability, but with optimized batching
+    // This ensures all data arrives correctly
+    for(let i=0; i<buffer.length; i+=CHUNK_SIZE) {
+        const chunk = buffer.slice(i, Math.min(i+CHUNK_SIZE, buffer.length));
+        chunkCount++;
+        
+        try {
+            // Use writeValue with ACK - slower but reliable
+            // The ACK ensures data was received before sending next chunk
+            await rxChar.writeValue(chunk);
+        } catch(e) {
+            errorCount++;
+            console.error(`Error at chunk ${chunkCount} (offset ${i}):`, e);
+            
+            // Retry once
+            try {
+                await new Promise(r => setTimeout(r, 20)); // Wait before retry
+                await rxChar.writeValue(chunk);
+                console.log(`Retry successful for chunk ${chunkCount}`);
+            } catch(e2) {
+                console.error(`Retry also failed:`, e2);
+                document.getElementById('trainLog').textContent = `Error at ${i}: ${e2.message}`;
+                throw e2;
+            }
+        }
+        
+        uploaded += chunk.length;
+        
+        // Update progress less frequently (every batch or every 50KB)
+        if (chunkCount % BATCH_SIZE === 0 || i % 51200 === 0) {
+            const progress = Math.floor((uploaded / buffer.length) * 100);
+            const elapsed = (Date.now() - startTime) / 1000;
+            const speed = (uploaded / 1024 / elapsed).toFixed(1);
+            document.getElementById('trainLog').textContent = 
+                `Uploading ${(uploaded/1024).toFixed(1)} KB / ${totalKB} KB (${progress}%) @ ${speed} KB/s`;
+            document.getElementById('uploadProgressBar').style.width = `${progress}%`;
+            document.getElementById('uploadProgressText').textContent = `${uploaded}/${buffer.length} bytes @ ${speed} KB/s`;
+            if (chunkCount % 50 === 0) {
+                console.log(`Progress: ${uploaded}/${buffer.length} bytes (${progress}%), ${speed} KB/s, ${chunkCount} chunks`);
+            }
+        }
+        
+        // Small delay every few chunks to prevent overwhelming the BLE stack
+        // writeValue already waits for ACK, so minimal delay needed
+        if (chunkCount % 3 === 0) {
+            await new Promise(r => setTimeout(r, 2)); // 2ms delay every 3 chunks
+        }
+    }
+    
+    const totalTime = (Date.now() - startTime) / 1000;
+    const avgSpeed = (uploaded / 1024 / totalTime).toFixed(1);
+    
+    if (errorCount > 0) {
+        console.warn(`Upload completed with ${errorCount} errors (retried successfully)`);
+    }
+    
+    console.log(`Upload complete! Sent ${uploaded} bytes in ${chunkCount} chunks in ${totalTime.toFixed(1)}s (${avgSpeed} KB/s)`);
+    document.getElementById('uploadProgressBar').style.width = `100%`;
+    document.getElementById('uploadProgressText').textContent = `done: ${uploaded} bytes in ${totalTime.toFixed(1)}s (${avgSpeed} KB/s)`;
+    document.getElementById('trainLog').textContent = `Upload Complete! ${uploaded} bytes in ${totalTime.toFixed(1)}s (${avgSpeed} KB/s)`;
+    
+    // Short wait to ensure all data is processed
+    await new Promise(r => setTimeout(r, 100));
+    
+    alert(`Model Uploaded! ${totalTime.toFixed(1)}s @ ${avgSpeed} KB/s`);
+};
+
+document.getElementById('selInputRes').addEventListener('change', () => {
+  if (dataset.xs) {
+    alert("Вы изменили входное разрешение. Нужно сбросить данные и собрать датасет заново.");
+    document.getElementById('btnReset').click();
+  }
+  renderDatasetSummary();
+});
+
+document.getElementById('btnLiveTest').onclick = async () => {
+    const btn = document.getElementById('btnLiveTest');
+    const statusEl = document.getElementById('liveTestStatus');
+    const resultEl = document.getElementById('liveTestResult');
+    const barsEl = document.getElementById('liveTestBars');
+    if (!trainedModel) return alert("Сначала обучите модель");
+    const img = document.getElementById('cameraPreview');
+    if (!img.src) return alert("Нет картинки с камеры");
+    
+    if (liveTestTimer) {
+        clearInterval(liveTestTimer);
+        liveTestTimer = null;
+        statusEl.textContent = "idle";
+        statusEl.className = "pill";
+        btn.textContent = "Live Test (в браузере)";
+        return;
+    }
+    statusEl.textContent = "running";
+    statusEl.className = "pill ok";
+    btn.textContent = "Stop Live Test";
+    
+    liveTestTimer = setInterval(() => {
+        try {
+            const spec = getInputSpec();
+            const pred = tf.tidy(() => {
+                const raw = tf.browser.fromPixels(img);
+                const resized = tf.image.resizeBilinear(raw, [spec.h, spec.w], false);
+                const gray = resized.mean(2);
+                const minVal = gray.min();
+                const maxVal = gray.max();
+                const range = maxVal.sub(minVal).add(1e-7);
+                const stretched = gray.sub(minVal).div(range);
+                const meanNorm = gray.mean().div(255.0);
+                const normalized = stretched.sub(meanNorm.sub(0.5)).mul(1.2).add(0.5).clipByValue(0, 1);
+                const x = normalized.reshape([1, spec.dim]);
+                return trainedModel.predict(x);
+            });
+            const probs = Array.from(pred.dataSync());
+            pred.dispose();
+            const pairs = probs.map((p,i)=>({i,p,name:classes[i]?.name ?? `C${i}`})).sort((a,b)=>b.p-a.p);
+            const top = pairs[0];
+            resultEl.textContent = `Top: ${top.name} (${(top.p*100).toFixed(1)}%)`;
+            barsEl.innerHTML = pairs.slice(0, Math.min(6, pairs.length)).map(x => {
+                const w = Math.round(x.p*100);
+                return `<div class="row" style="gap:6px; align-items:center; margin:4px 0;">
+                    <div style="flex:0 0 120px;">${x.name}</div>
+                    <div class="progress" style="flex:1;"><div style="width:${w}%;"></div></div>
+                    <div style="flex:0 0 52px; text-align:right;" class="mono">${w}%</div>
+                </div>`;
+            }).join("");
+        } catch(e) {
+            // ignore transient
+        }
+    }, 200);
+};
+</script>
+</body>
+</html>
