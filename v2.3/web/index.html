@@ -107,8 +107,12 @@
       box-shadow: 0 1px 2px rgba(0,0,0,0.04);
       margin-bottom: 10px;
     }
-    .row { display:flex; gap:8px; align-items:center; }
-    .row > * { flex: 1; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    .row > * { flex: 1; min-width: 0; }
+    .row.tight { flex-wrap: nowrap; }
+    .row.tight > * { flex: 0 0 auto; }
+    .row.tight .grow { flex: 1 1 auto; min-width: 0; }
+    .row.tight .btn { width: auto; margin-bottom: 0; }
     .pill {
       display:inline-flex;
       align-items:center;
@@ -149,8 +153,16 @@
       border: 1px solid #e5e7eb;
       background: #111;
     }
-    .mini { font-size: 12px; color:#64748b; }
+    .mini { font-size: 12px; color:#64748b; overflow-wrap: anywhere; word-break: break-word; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    /* Small screens: stack controls instead of squeezing */
+    @media (max-width: 420px) {
+      .row { flex-direction: column; align-items: stretch; }
+      .pill { max-width: 100%; }
+      .sidebar { width: 100%; }
+      #blocklyDiv, #pythonDiv { right: 0; }
+    }
 
     /* Modern Button Styles */
     .btn {
@@ -308,8 +320,8 @@ elif ai.sees("Wait"):
         </div>
 
         <div class="card">
-          <div class="row" style="margin-bottom:8px;">
-            <button id="btnLiveTest" class="btn btn-secondary" style="margin:0;">Live Test (в браузере)</button>
+          <div class="row tight" style="margin-bottom:8px;">
+            <button id="btnLiveTest" class="btn btn-secondary grow" style="margin:0;">Live Test (в браузере)</button>
             <span id="liveTestStatus" class="pill">idle</span>
           </div>
           <div id="liveTestResult" style="font-weight:600; margin-bottom:6px;">—</div>
@@ -826,9 +838,9 @@ function renderDatasetSummary() {
     const rec = max === 0 ? "Соберите примеры" : (imbalance < 60 ? "Дисбаланс: добавьте в слабые классы" : "Баланс ок");
     const pillClass = max === 0 ? "pill warn" : (imbalance < 60 ? "pill warn" : "pill ok");
     el.innerHTML = `
-      <div class="row" style="align-items:flex-start;">
+      <div style="display:flex; flex-direction:column; gap:6px;">
         <div><span class="${pillClass}">${rec}</span></div>
-        <div class="mini">Всего: <b>${total}</b> | min/max: <b>${min}/${max}</b> (${imbalance}%)</div>
+        <div class="mini">Всего: <b>${total}</b><br>min/max: <b>${min}/${max}</b> (${imbalance}%)</div>
       </div>
     `;
 }
