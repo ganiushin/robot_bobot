@@ -1,4 +1,4 @@
-# Bobot v2.1 Firmware
+# Bobot v2.3 Firmware
 
 ## Features
 - **ESP32-S3** based robot firmware.
@@ -16,7 +16,7 @@
 
 ## Hardware
 - ESP32-S3 (Freenove or similar).
-- OV2640 Camera.
+- OV3660 Camera.
 - 2x DC Motors (DRV8833 or L298N).
 
 ## Usage
